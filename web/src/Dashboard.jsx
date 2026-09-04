@@ -285,12 +285,15 @@ function VerdictPanel({ sw, intendedHours, dominant, onChangeHours }) {
   );
 }
 
-function LiveTotal({ total, today, burn, burnBySource, dominant, fx }) {
-  // legenda da queima: origem quando ha Science ativo, senao o modelo dominante
+function LiveTotal({ total, today, burn, burnBySource, burnModels, dominant, fx }) {
+  // legenda da queima: origem quando ha Science ativo; senao o modelo dominante,
+  // com +N quando mais de um modelo entra na soma
   const burnParts = [];
   if (burnBySource?.code > 0) burnParts.push(`code ${fmtTokens(burnBySource.code)}/h`);
   if (burnBySource?.science > 0) burnParts.push(`science ${fmtTokens(burnBySource.science)}/h`);
-  const burnLegend = burnParts.length > 1 ? burnParts.join(' · ') : modelShort(dominant);
+  const lead = modelShort(dominant);
+  const byModel = lead && burnModels > 1 ? `${lead} +${burnModels - 1}` : lead;
+  const burnLegend = burnParts.length > 1 ? burnParts.join(' · ') : byModel;
   const tokens = useAnimated(total?.total_tokens, 900);
   return (
     <Card className="flex h-full flex-col justify-between gap-4">
@@ -877,6 +880,7 @@ export default function Dashboard() {
   const burnMap = state?.burn_tokph || {};
   // queima total (todos os modelos, Claude Code + Science) e quebra por origem
   const totalBurn = Object.values(burnMap).reduce((a, b) => a + b, 0) || null;
+  const burnModels = Object.values(burnMap).filter((v) => v > 0).length;
   const burnBySource = { code: 0, science: 0 };
   Object.values(state?.burn_by_source || {}).forEach((d) => {
     Object.entries(d).forEach(([s, v]) => {
@@ -913,6 +917,7 @@ export default function Dashboard() {
               today={state?.history?.dia}
               burn={totalBurn}
               burnBySource={burnBySource}
+              burnModels={burnModels}
               dominant={state?.dominant_model}
               fx={fx}
             />
