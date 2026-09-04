@@ -108,6 +108,7 @@ def build_state() -> dict:
             states[win] = st
 
     burn = Ctx.store.recent_tokph(2)
+    burn_src = Ctx.store.recent_burn_by_source(2)
     dominant = max(burn, key=burn.get) if burn else None
     verdict = (forecast.switch_verdict(states, dominant,
                                        cfg.get("intended_hours", 2.0))
@@ -180,6 +181,8 @@ def build_state() -> dict:
         "windows": windows_out,
         "switch": verdict,
         "burn_tokph": {k: round(v) for k, v in burn.items()},
+        "burn_by_source": {m: {s: round(v) for s, v in d.items()}
+                           for m, d in burn_src.items()},
         "dominant_model": dominant,
         "extra_usage": extra,
         "history": history,

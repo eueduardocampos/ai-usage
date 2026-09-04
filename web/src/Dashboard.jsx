@@ -285,7 +285,12 @@ function VerdictPanel({ sw, intendedHours, dominant, onChangeHours }) {
   );
 }
 
-function LiveTotal({ total, today, burn, dominant, fx }) {
+function LiveTotal({ total, today, burn, burnBySource, dominant, fx }) {
+  // legenda da queima: origem quando ha Science ativo, senao o modelo dominante
+  const burnParts = [];
+  if (burnBySource?.code > 0) burnParts.push(`code ${fmtTokens(burnBySource.code)}/h`);
+  if (burnBySource?.science > 0) burnParts.push(`science ${fmtTokens(burnBySource.science)}/h`);
+  const burnLegend = burnParts.length > 1 ? burnParts.join(' · ') : modelShort(dominant);
   const tokens = useAnimated(total?.total_tokens, 900);
   return (
     <Card className="flex h-full flex-col justify-between gap-4">
@@ -319,7 +324,7 @@ function LiveTotal({ total, today, burn, dominant, fx }) {
             {burn ? `${fmtTokens(burn)}/h` : '—'}
           </div>
           <div className="mc-num text-[12px]" style={{ color: C.muted }}>
-            {modelShort(dominant) || '—'}
+            {burnLegend || '—'}
           </div>
         </div>
       </div>
@@ -870,7 +875,14 @@ export default function Dashboard() {
   const fx = state?.config?.usd_brl || null;
   const winKeys = ['five_hour', 'seven_day', 'seven_day_sonnet'].filter((k) => windows[k]);
   const burnMap = state?.burn_tokph || {};
-  const dominantBurn = state?.dominant_model ? burnMap[state.dominant_model] : null;
+  // queima total (todos os modelos, Claude Code + Science) e quebra por origem
+  const totalBurn = Object.values(burnMap).reduce((a, b) => a + b, 0) || null;
+  const burnBySource = { code: 0, science: 0 };
+  Object.values(state?.burn_by_source || {}).forEach((d) => {
+    Object.entries(d).forEach(([s, v]) => {
+      burnBySource[s] = (burnBySource[s] || 0) + v;
+    });
+  });
   const heatmap = history?.heatmap || [];
 
   return (
@@ -899,7 +911,8 @@ export default function Dashboard() {
             <LiveTotal
               total={total}
               today={state?.history?.dia}
-              burn={dominantBurn}
+              burn={totalBurn}
+              burnBySource={burnBySource}
               dominant={state?.dominant_model}
               fx={fx}
             />
