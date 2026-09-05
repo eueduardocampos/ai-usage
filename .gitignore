@@ -29,3 +29,6 @@ manter-painel-online.ps1
 *.streamDeckPlugin
 
 .streamdeck-backups/
+
+# Backend empacotado por plataforma
+desktop/src-tauri/engine/

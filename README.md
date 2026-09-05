@@ -130,66 +130,63 @@ reconectar a conta, os equivalentes são `reconectar-conta.bat` /
 
 ## App de desktop (macOS, Windows e Linux)
 
-Além do painel completo no navegador, existe um **widget flutuante nativo** — uma
-janelinha sempre visível, no estilo dos widgets do sistema, que mostra o essencial
-em tempo real e fica por cima das outras janelas enquanto você trabalha. Tem build
-para **macOS, Windows e Linux**.
+A partir da versão **3.0**, o instalador inclui o painel, a interface e o Python
+necessário para executá-lo. Abra **AI Usage**: o motor inicia automaticamente e
+o painel completo aparece. Não precisa de terminal, Python ou Node instalados.
 
-![Widget de desktop](docs/widget-mac.png)
+### Instalar pelo release
 
-O que ele traz:
+Baixe na [página de releases](https://github.com/eueduardocampos/claude-usage/releases):
 
-- **Janela flutuante** sem barra de título, que você arrasta e fixa em qualquer
-  lugar da tela.
-- **Vidro translúcido** com um **regulador de transparência** (passe o mouse sobre
-  o widget e use o controle deslizante). No macOS o desktop aparece borrado por
-  baixo (Liquid Glass); no Windows usa Mica nativo; no Linux fica translúcido sem
-  o blur.
-- **Sempre no topo**, com atualização a cada 5s.
-- **Anel principal da janela de 5h** (a que realmente trava o uso), anéis menores
-  para o semanal e o Sonnet, modelo mais usado na sessão, quando a janela
-  reinicia e o total de tokens dígito a dígito.
-- **Ícone na bandeja/barra de menu**: clique para mostrar/ocultar, alternar
-  "sempre no topo" ou sair.
+| Sistema | Arquivo |
+| --- | --- |
+| Mac Apple Silicon (M1 ou posterior) | `.dmg` com `aarch64` no nome |
+| Mac Intel | `.dmg` com `x64` no nome |
+| Windows 10/11 64 bits | `setup.exe` ou `.msi` |
+| Linux 64 bits | `.AppImage`, `.deb` ou `.rpm` |
 
-> O app de desktop é só a "moldura" nativa: ele exibe o widget servido pelo
-> backend em `localhost:8090`. **O painel (`python main.py`) precisa estar
-> rodando** para o app mostrar dados — vale para os três sistemas.
+No Mac, arraste para Aplicativos. No Windows, siga o instalador. No Linux,
+instale o pacote da sua distribuição ou dê permissão de execução ao AppImage.
+Os instaladores ainda não são assinados/notarizados: macOS e Windows podem
+pedir liberação de segurança na primeira abertura. O AppImage pode precisar de FUSE.
 
-### Instalar pelo release (sem ferramentas de build)
+O aplicativo usa a porta local **8090**, também consumida pelo Stream Deck.
+Se encontrar uma instância compatível, reutiliza-a. Se a porta estiver ocupada
+por outra aplicação ou uma versão antiga, mostra uma mensagem para resolver.
+Use **Sair** no menu da bandeja para encerrar o motor iniciado pelo app.
 
-1. Deixe o painel rodando: `python main.py`.
-2. Baixe o instalador do seu sistema na [página de releases](https://github.com/eueduardocampos/claude-usage/releases):
-   - **macOS:** `.dmg` (universal — Intel e Apple Silicon). Abra e arraste o app
-     para Aplicativos. Na primeira vez, clique com o botão direito → **Abrir**
-     (o app não é assinado pela Apple).
-   - **Windows:** `.msi` ou `.exe`. Se o SmartScreen avisar, clique em **Mais
-     informações → Executar assim mesmo**.
-   - **Linux:** `.AppImage` (dê permissão de execução e rode), `.deb` (Debian/
-     Ubuntu) ou `.rpm` (Fedora/openSUSE).
+### Conectar as contas
 
-### Rodar a partir do código
+O instalador não inclui contas nem histórico. Conecte Claude nas configurações
+do painel ou use o login existente do Claude Code. Para Codex, entre com sua
+assinatura ChatGPT no Codex Desktop/CLI nessa máquina. Os tokens aparecem à
+medida que esses aplicativos são usados. Chat comum, voz e imagens não são medidos.
 
-Precisa do [Rust](https://rustup.rs) instalado (`rustup`). Com o painel rodando:
+Configuração, token e banco ficam na pasta de dados do usuário, fora da instalação:
+
+- macOS: `~/Library/Application Support/claude-usage/`
+- Windows: `%LOCALAPPDATA%\claude-usage\`
+- Linux: `$XDG_DATA_HOME/claude-usage/` ou `~/.local/share/claude-usage/`
+
+### Desenvolver e gerar instaladores
+
+No ambiente de desenvolvimento, instale Python, Node e Rust. Então execute:
 
 ```bash
+npm --prefix web ci
+npm --prefix web run build
+python -m pip install pyinstaller==6.22.2 certifi
+python desktop/packaging/build.py
+python desktop/packaging/smoke.py
 cd desktop
-npx @tauri-apps/cli dev      # abre o widget em modo desenvolvimento
-npx @tauri-apps/cli build    # gera o instalador em src-tauri/target/release/bundle
+npx @tauri-apps/cli@2 dev
+npx @tauri-apps/cli@2 build
 ```
 
-Os releases multiplataforma são gerados automaticamente pelo GitHub Actions
-(`.github/workflows/release.yml`) a cada tag `v*`, em runners nativos de cada
-sistema.
-
-### Ícone do app
-
-O ícone atual é um placeholder. Para trocar pela arte definitiva, coloque um PNG
-quadrado (≥ 1024px) e rode, dentro de `desktop/`:
-
-```bash
-npx @tauri-apps/cli icon caminho/para/arte.png
-```
+O GitHub Actions gera cada pacote no sistema e arquitetura correspondentes,
+verifica o motor com HOME temporário e PATH vazio, e só publica o release quando
+todos os builds passam. Versões 2.x continham apenas o widget e exigiam iniciar
+o backend separadamente; não oferecem essa instalação autônoma.
 
 ## Stream Deck
 

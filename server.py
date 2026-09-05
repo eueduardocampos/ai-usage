@@ -398,7 +398,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split("?")[0]
         try:
-            if p == "/api/state":
+            if p == "/api/health":
+                self._send(200, json.dumps({"app": "ai-usage", "protocol": 1}))
+            elif p == "/api/state":
                 self._send(200, json.dumps(build_state(), ensure_ascii=False))
             elif p == "/api/total":
                 self._send(200, json.dumps(Ctx.store.total_summary(), ensure_ascii=False))
@@ -474,7 +476,8 @@ class Handler(BaseHTTPRequestHandler):
 
 # --- config + run ------------------------------------------------------------
 
-CONFIG_PATH = os.path.join(HERE, "config.json")
+DATA_DIR = os.environ.get("AI_USAGE_DATA_DIR", HERE)
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 DEFAULTS = {"port": 8090, "refresh_seconds": 120, "currency": "BRL",
             "credits_divisor": 100, "intended_hours": 2.0, "daily_days": 30,
             "callback_port": 54545, "open_browser": True,
@@ -509,6 +512,8 @@ def _db_path():
     """O sqlite precisa de disco local: rodar o painel de dentro de um drive
     sincronizado (Google Drive etc.) deixa cada write segurando o lock por
     segundos e o /api/state estoura o timeout dos clientes (Stream Deck)."""
+    if os.environ.get("AI_USAGE_DATA_DIR"):
+        return os.path.join(DATA_DIR, "painel.db")
     base = (os.environ.get("LOCALAPPDATA")
             or os.path.join(os.path.expanduser("~"), ".local", "share"))
     d = os.path.join(base, "claude-usage")
@@ -526,17 +531,26 @@ def _db_path():
     return path
 
 
-def run():
+def run(desktop=False, port=None, collect=True):
     Ctx.cfg = load_config()
+    if desktop:
+        Ctx.cfg.update(host="127.0.0.1", port=port or 8090, open_browser=False)
     Ctx.store = store_mod.Store(_db_path())
     Ctx.codex = codex_usage.CodexUsage(_db_path())
-    Ctx.codex.scan()
-    Ctx.codex.refresh_limits(force=True)
-    Ctx.token_store = auth.TokenStore(HERE)
+    Ctx.token_store = auth.TokenStore(DATA_DIR)
 
-    poll_once()  # poll inicial sincrono: auth_connected ja correto na 1a carga
-    threading.Thread(target=poller_loop, daemon=True).start()
-    threading.Thread(target=scan_loop, daemon=True).start()
+    def initialize():
+        Ctx.codex.scan()
+        Ctx.codex.refresh_limits(force=True)
+        poll_once()
+        threading.Thread(target=poller_loop, daemon=True).start()
+        threading.Thread(target=scan_loop, daemon=True).start()
+
+    if collect:
+        if desktop:
+            threading.Thread(target=initialize, daemon=True).start()
+        else:
+            initialize()
 
     port = int(Ctx.cfg.get("port", 8090))
     host = Ctx.cfg.get("host", "127.0.0.1")

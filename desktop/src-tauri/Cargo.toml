@@ -1,7 +1,7 @@
 [package]
 name = "claude-usage-desktop"
-version = "2.0.0"
-description = "Widget flutuante de consumo do Claude"
+version = "3.0.0"
+description = "Painel de consumo Claude e Codex com backend integrado"
 authors = ["Eduardo Campos"]
 license = "MIT"
 repository = "https://github.com/eueduardocampos/claude-usage"

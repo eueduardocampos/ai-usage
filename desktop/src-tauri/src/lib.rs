@@ -1,3 +1,4 @@
+mod engine;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -62,6 +63,8 @@ fn ensure_window_on_screen(window: &tauri::WebviewWindow) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(engine::Engine::default())
+        .invoke_handler(tauri::generate_handler![engine::start_engine])
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
@@ -103,7 +106,7 @@ pub fn run() {
                 "on_top",
                 "Sempre no topo",
                 true,
-                true,
+                false,
                 None::<&str>,
             )?;
             let sep = PredefinedMenuItem::separator(app)?;
@@ -114,7 +117,7 @@ pub fn run() {
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .icon_as_template(true)
-                .tooltip("Consumo do Claude")
+                .tooltip("Consumo de IA")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
@@ -142,6 +145,9 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) { app.state::<engine::Engine>().stop(); }
+        });
 }

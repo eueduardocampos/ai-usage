@@ -1,114 +1,109 @@
-name: Publicar release
-
-# Dispara quando uma tag v* e enviada. Builda o app de desktop (Tauri) para
-# macOS (universal), Windows e Linux em runners nativos e anexa os instaladores
-# ao release como rascunho. Roda em paralelo (matriz); cada job sobe seus
-# artefatos no mesmo release.
-
+name: Instaladores completos
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+    branches: ['publish/ai-usage']
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
-  publish-tauri:
+  desktop:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
-            args: '--target universal-apple-darwin'
-            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
-          - platform: ubuntu-22.04
-            args: ''
-            rust-targets: ''
-          - platform: windows-latest
-            args: ''
-            rust-targets: ''
-
-    runs-on: ${{ matrix.platform }}
+          - os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Instalar dependencias do sistema (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential curl wget file \
-            libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev patchelf
-
-      - name: Instalar Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
         with:
-          targets: ${{ matrix.rust-targets }}
-
-      - name: Cache do Cargo
-        uses: swatinem/rust-cache@v2
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: './desktop/src-tauri -> target'
-
-      - name: Build + anexar ao release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Dependências Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Compilar interface e validar coletores
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+          python test/test_codex_usage.py
+          python test/test_codex_pricing.py
+          python test/test_rate_limit.py
+          node streamdeck/test/unified.js
+          node streamdeck/test/fake_sd.js
+      - name: Empacotar Python e painel
+        run: |
+          python -m pip install pyinstaller==6.22.2 certifi
+          python desktop/packaging/build.py
+          python desktop/packaging/smoke.py
+      - name: Gerar instaladores
+        working-directory: desktop
+        run: npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - uses: actions/upload-artifact@v4
         with:
-          projectPath: desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: '${{ github.ref_name }} — Consumo do Claude (desktop)'
-          releaseBody: |
-            Widget flutuante de consumo do Claude para **macOS, Windows e Linux**.
-
-            O app e a moldura nativa: ele exibe o painel servido em `localhost:8090`,
-            entao o painel (`python main.py`) precisa estar rodando. Instalacao e
-            detalhes por sistema no [README](https://github.com/eueduardocampos/claude-usage#readme).
-
-            Baixe o instalador do seu sistema abaixo:
-            - **macOS**: `.dmg` (universal — Intel e Apple Silicon)
-            - **Windows**: `.msi` ou `.exe`
-            - **Linux**: `.AppImage`, `.deb` ou `.rpm`
-
-            Apps nao assinados: na primeira execucao pode ser necessario liberar no
-            Gatekeeper (macOS, botao direito > Abrir) ou no SmartScreen (Windows).
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
-
-  publish-streamdeck:
+          name: installers-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
+  streamdeck:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
-      - name: Validar manifest do plugin
-        run: npx --yes @elgato/cli validate streamdeck/digital.astronauta.claudeusage.sdPlugin
-
-      - name: Empacotar .streamDeckPlugin e perfil
-        run: |
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npx --yes @elgato/cli validate streamdeck/digital.astronauta.claudeusage.sdPlugin
+      - run: |
+          mkdir -p dist-release
           cd streamdeck
-          zip -r ../digital.astronauta.claudeusage.streamDeckPlugin digital.astronauta.claudeusage.sdPlugin
-          cd ..
-          cp streamdeck/*.streamDeckProfile .
-
-      - name: Anexar ao release
+          zip -r ../dist-release/digital.astronauta.claudeusage.streamDeckPlugin digital.astronauta.claudeusage.sdPlugin
+          cp *.streamDeckProfile ../dist-release/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamdeck
+          path: dist-release/*
+  publish:
+    needs: [desktop, streamdeck]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Publicar somente depois de todos os builds passarem
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" \
-            "digital.astronauta.claudeusage.streamDeckPlugin" \
-            "Claude Usage (SD+).streamDeckProfile" \
-            "AI Usage (SD+).streamDeckProfile" \
-            "Consumo de IA.streamDeckProfile" \
-            --repo "${{ github.repository }}" --clobber || \
-          gh release create "${{ github.ref_name }}" \
-            "digital.astronauta.claudeusage.streamDeckPlugin" \
-            "Claude Usage (SD+).streamDeckProfile" \
-            "AI Usage (SD+).streamDeckProfile" \
-            "Consumo de IA.streamDeckProfile" \
-            --repo "${{ github.repository }}" --draft --title "${{ github.ref_name }}"
+          mapfile -d '' files < <(find release-assets -type f -print0)
+          gh release create "$RELEASE_TAG" "${files[@]}" --repo "$REPO" --title "$RELEASE_TAG — Consumo de IA" --notes-file desktop/RELEASE.md --verify-tag
