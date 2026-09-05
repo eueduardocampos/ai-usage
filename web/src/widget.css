@@ -1,0 +1,44 @@
+html.is-widget, html.is-widget body, html.is-widget #root { margin:0; min-height:100%; background:transparent; color:#ecf0f5; font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color-scheme:dark; }
+html.is-widget body { min-width:360px; }
+.aw-shell { min-height:100vh; display:grid; place-items:center; padding:10px; box-sizing:border-box; }
+.aw-widget { width:100%; max-width:700px; background:#101720; border:1px solid #2a3541; border-radius:18px; padding:16px; box-sizing:border-box; box-shadow:0 8px 24px #0003; }
+.aw-widget button { font:inherit; color:inherit; cursor:pointer; }
+.aw-widget button:focus-visible { outline:2px solid #ecf0f5; outline-offset:3px; }
+.aw-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.aw-brand { display:flex; align-items:center; gap:10px; border:0; padding:0; background:none; text-align:left; }
+.aw-brand img { width:40px; height:40px; }
+.aw-brand span { display:grid; gap:2px; }
+.aw-brand strong { font-size:17px; letter-spacing:-.4px; }
+.aw-brand small { font-size:11px; color:#8e9cad; }
+.aw-controls { display:flex; align-items:center; gap:5px; }
+.aw-controls button { background:transparent; border:0; border-radius:6px; width:28px; height:28px; font-size:18px; color:#acb8c8; }
+.aw-controls button:hover { background:#273442; }
+.aw-live { font-size:10px; color:#8e9cad; margin-right:6px; }
+.aw-live::before { content:'●'; margin-right:5px; }
+.aw-live[data-fresh=true]::before { color:#45d6aa; }
+.aw-accounts { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.aw-widget .aw-account { display:block; min-width:0; border:1px solid #293541; border-top:2px solid var(--accent); background:#151f29; border-radius:11px; padding:13px; text-align:left; transition:background .15s; }
+.aw-account:hover { background:#1b2733; }
+.aw-account-name { display:flex; justify-content:space-between; align-items:center; color:var(--accent); font-size:13px; font-weight:650; margin-bottom:12px; }
+.aw-account-arrow { color:#8291a3; font-size:15px; }
+.aw-quotas { display:flex; gap:20px; min-height:88px; }
+.aw-quota { flex:1; min-width:0; display:flex; flex-direction:column; }
+.aw-period { font-size:10px; color:#a3b0c0; margin-bottom:5px; }
+.aw-value { font-size:32px; font-weight:650; letter-spacing:-1px; line-height:1.15; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.aw-value small { font-size:9px; font-weight:400; letter-spacing:0; color:#91a1b4; }
+.aw-track { display:block; height:4px; background:#2c3845; border-radius:3px; overflow:hidden; margin:9px 0 7px; }
+.aw-track i { display:block; height:100%; border-radius:3px; }
+.aw-reset { font-size:10px; color:#9bacbe; white-space:nowrap; }
+.aw-quota[data-stale=true] .aw-value { color:#a3adba; }
+.aw-empty { display:grid; align-content:center; gap:8px; }
+.aw-empty strong { font-size:13px; font-weight:500; }
+.aw-empty span { font-size:11px; color:#9bacbe; }
+.aw-burn { border-top:1px solid #2a3541; padding-top:10px; margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:6px; font-size:10px; color:#9bacbe; }
+.aw-burn strong { color:#e5ecf5; font-size:13px; font-weight:600; white-space:nowrap; }
+.aw-burn small { font-size:9px; font-weight:400; color:#9bacbe; }
+.aw-footer { margin-top:12px; display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:10px; color:#8e9cad; }
+.aw-footer button { border:0; background:none; white-space:nowrap; color:#c8d6e5; padding:3px 0; font-size:11px; }
+.aw-alert { color:#ffae73; }
+@media(max-width:500px) { .aw-widget { padding:12px; } .aw-accounts { gap:8px; } .aw-widget .aw-account { padding:10px; } .aw-quotas { gap:10px; } .aw-value { font-size:26px; } .aw-value small { display:none; } .aw-live { display:none; } .aw-burn { flex-wrap:wrap; } .aw-footer span { max-width:52%; } }
+
+@media(max-width:500px) { .aw-reset { font-size:9px; } }

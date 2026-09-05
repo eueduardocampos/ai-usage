@@ -76,7 +76,7 @@ trocar pra Opus agora ou vou estourar antes de terminar?"*.
 - 📊 Gráficos de tokens por dia, perfil por hora do dia e evolução das janelas.
 - ⏱️ **Ritmo adaptativo e seguro**: lê a API a cada 90s perto do limite e a cada 5 min com folga, com backoff em `429` e sem tratar limite de requisição como desconexão.
 - 🖥️ **Interface unificada e responsiva**: cotas ativas em uma faixa, janelas zeradas recolhidas e cores por plataforma.
-- 🪟 **Widget flutuante nativo** para macOS, Windows e Linux (sempre no topo) — veja [App de desktop](#app-de-desktop-macos-windows-e-linux).
+- 🪟 **Widget Claude + Codex** para macOS, Windows e Linux (sempre no topo, com ícone próprio) — veja [App de desktop](#app-de-desktop-macos-windows-e-linux).
 - 🔒 Histórico armazenado localmente; consultas autenticadas vão aos serviços de cada conta.
 
 ## Stack
@@ -132,7 +132,8 @@ reconectar a conta, os equivalentes são `reconectar-conta.bat` /
 
 A partir da versão **3.0**, o instalador inclui o painel, a interface e o Python
 necessário para executá-lo. Abra **AI Usage**: o motor inicia automaticamente e
-o painel completo aparece. Não precisa de terminal, Python ou Node instalados.
+o widget aparece, com Claude e Codex lado a lado. Clique no ícone, em uma conta
+ou em **Painel completo** para abrir a versão web no navegador. Não precisa de terminal, Python ou Node instalados.
 
 ### Instalar pelo release
 
@@ -154,6 +155,14 @@ O aplicativo usa a porta local **8090**, também consumida pelo Stream Deck.
 Se encontrar uma instância compatível, reutiliza-a. Se a porta estiver ocupada
 por outra aplicação ou uma versão antiga, mostra uma mensagem para resolver.
 Use **Sair** no menu da bandeja para encerrar o motor iniciado pelo app.
+
+### Identidade do aplicativo
+
+![Widget desktop Claude e Codex](docs/widget-mac.png)
+
+O ícone e o visual fazem parte do aplicativo e já vêm em todos os instaladores.
+Laranja identifica Claude; verde identifica Codex no desktop, no painel web e
+no Stream Deck. Não é necessário criar, escolher ou substituir ícones.
 
 ### Conectar as contas
 

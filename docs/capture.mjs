@@ -13,7 +13,7 @@ const hist=(openai)=>Object.fromEntries(['dia','semana','mes','geral'].map((k,i)
 const limit={id:'codex',name:'Codex',snapshot_ts:iso(),primary:{used_percent:23,window_minutes:10080,resets_at:iso(120)}};
 const state={generated_at:iso(),snapshot_ts:iso(),auth_connected:true,windows:{five_hour:{utilization:42,resets_at:iso(3),rate:5,projected:57},seven_day:{utilization:31,resets_at:iso(98),rate:.3,projected:60}},config:{usd_brl:5,subscription_brl:550,chatgpt_subscription_brl:550,chatgpt_extra_brl:0,intended_hours:2},history:hist(false),burn_tokph:{'claude-opus-4-6':14e6,'claude-sonnet-4-6':7e6},extra_usage:{used:0,burning:false},chatgpt:{limits:[limit],history:hist(true),burn_tokph:12e6,burn_by_model:{'gpt-5.4':12e6},daily:daily(6e5),heatmap:heatmap(5e5),limit_history:Array.from({length:12},(_,i)=>({ts:iso(i-11),limits:[{...limit,primary:{...limit.primary,used_percent:12+i}}]}))}};
 const history={daily:daily(1e6),heatmap:heatmap(7e5),snapshots:Array.from({length:12},(_,i)=>({ts:iso(i-11),window:'seven_day',utilization:20+i}))};
-const server=createServer(async(req,res)=>{try{if(req.url.startsWith('/api/')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(req.url==='/api/state'?state:req.url==='/api/history'?history:{total_tokens:304e6}));return;}const url=req.url==='/'?'index.html':req.url.slice(1);res.setHeader('Content-Type',url.endsWith('.js')?'text/javascript':url.endsWith('.css')?'text/css':'text/html');res.end(await readFile(new URL('../web/dist/'+url,import.meta.url)));}catch{res.writeHead(404);res.end();}});
+const server=createServer(async(req,res)=>{try{if(req.url.startsWith('/api/')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(req.url==='/api/state'?state:req.url==='/api/history'?history:{total_tokens:304e6}));return;}const pathname=req.url.split('?')[0];const url=['/','/widget'].includes(pathname)?'index.html':pathname.slice(1);res.setHeader('Content-Type',url.endsWith('.js')?'text/javascript':url.endsWith('.css')?'text/css':url.endsWith('.svg')?'image/svg+xml':'text/html');res.end(await readFile(new URL('../web/dist/'+url,import.meta.url)));}catch{res.writeHead(404);res.end();}});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const browser=await chromium.launch({headless:true,...(process.env.CHROME_CHANNEL?{channel:process.env.CHROME_CHANNEL}:{})});
 try{
@@ -24,10 +24,23 @@ const comparison=await page.getByText('Comparativo de consumo',{exact:true}).loc
 const evolution=await page.getByText('Evolução das cotas',{exact:true}).locator('xpath=ancestor::section').boundingBox();
 await page.screenshot({path:new URL('painel.png',import.meta.url).pathname,fullPage:true,clip:{x:0,y:0,width:1440,height:comparison.y-16}});
 await page.screenshot({path:new URL('comparativo.png',import.meta.url).pathname,fullPage:true,clip:{x:0,y:comparison.y-16,width:1440,height:evolution.y-comparison.y}});
+await page.setViewportSize({width:640,height:350});
+await page.addInitScript(()=>{window.__opened=[];window.__TAURI__={core:{invoke:async command=>{window.__opened.push(command);}}};});
+await page.goto(`http://127.0.0.1:${server.address().port}/widget?native=1`);
+await page.getByRole('button',{name:'Claude',exact:false}).first().waitFor();
+await page.waitForTimeout(300);
+await page.screenshot({path:new URL('widget-mac.png',import.meta.url).pathname});
+for(const selector of ['.aw-brand','.aw-account:first-child','.aw-account:nth-child(2)','.aw-footer button']) await page.locator(selector).click();
+const opened=await page.evaluate(()=>window.__opened);
+if(opened.length!==4||opened.some(c=>c!=='open_dashboard')) throw new Error('Widget links did not invoke system browser');
+if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth||document.documentElement.scrollHeight>innerHeight)) throw new Error('Widget overflow');
+await page.setViewportSize({width:440,height:350});
+await page.screenshot({path:new URL('widget-compact.png',import.meta.url).pathname});
+if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth||document.documentElement.scrollHeight>innerHeight)) throw new Error('Compact widget overflow');
 const views=[['CLAUDE 5H','42%','reset 3h 0m',42],['CLAUDE 7D','31%','reset 4d 2h',31],['CODEX 7D','23%','reset 5d 0h',23],['FONTE','LICENÇA','Claude'],['CLAUDE /H','21M','tokens/h · 2h'],['CODEX /H','12M','tokens/h · 2h'],['CLAUDE ROI','0.8x','API / gasto'],['CODEX ROI','1.0x','API / gasto']].map(([label,value,sub,pct])=>({label,value,sub,pct,level:'safe',accent:label.includes('CODEX')?'#45d6aa':'#ef985d'}));
 await page.setViewportSize({width:880,height:540});
 await page.setContent(`<body style="margin:0;background:#080b10;padding:24px;font-family:Arial;color:white"><div style="display:grid;grid-template-columns:repeat(4,144px);justify-content:space-between;gap:20px">${views.map(v=>R.clean(v)).join('')}</div><div style="display:flex;justify-content:space-between;margin-top:24px">${[views[0],views[5],{...views[0],label:'CLAUDE DIA',value:'R$ 150',sub:'API estimada',pct:undefined},views[7]].map(v=>R.clean(v,true)).join('')}</div><p style="color:#acb8c8;font-size:13px">Consumo de IA · 8 teclas + 4 dials · dados demonstrativos</p>`);
 await page.screenshot({path:new URL('streamdeck.png',import.meta.url).pathname});
 if(errors.length)throw new Error(errors.join('\n'));
-console.log('Three screenshots generated; no browser errors.');
+console.log('Screenshots generated; widget browser links and responsive layout passed; no browser errors.');
 }finally{await browser.close();server.close();}

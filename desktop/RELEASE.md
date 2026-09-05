@@ -7,7 +7,7 @@ Painel **Claude + Codex** com motor integrado: não é necessário instalar Pyth
 | Windows 10/11 64 bits | `setup.exe` ou `.msi` |
 | Linux 64 bits | `.AppImage`, `.deb` ou `.rpm` |
 
-Abra o aplicativo **AI Usage**. Ele inicia o painel local automaticamente. As contas e os registros de uso precisam existir nessa máquina: conecte Claude nas configurações do painel; para Codex, entre na sua assinatura ChatGPT pelo Codex e utilize-o normalmente.
+Abra o aplicativo **AI Usage**. Ele inicia o motor local automaticamente e mostra o widget Claude + Codex. Clique no ícone ou em **Painel completo** para abrir a versão web no navegador. O ícone próprio do AI Usage já vem incluído em todos os instaladores. As contas e os registros de uso precisam existir nessa máquina: conecte Claude nas configurações do painel; para Codex, entre na sua assinatura ChatGPT pelo Codex e utilize-o normalmente.
 
 O aplicativo fica na bandeja/barra de menus. Use **Sair** para encerrar também o motor iniciado por ele. Se já houver uma instância compatível do painel rodando, ela será reutilizada e não será encerrada pelo aplicativo.
 

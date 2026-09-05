@@ -1,4 +1,11 @@
 mod engine;
+use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+fn open_dashboard(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener().open_url("http://localhost:8090/", None::<&str>).map_err(|e| e.to_string())
+}
+
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -64,7 +71,7 @@ fn ensure_window_on_screen(window: &tauri::WebviewWindow) {
 pub fn run() {
     tauri::Builder::default()
         .manage(engine::Engine::default())
-        .invoke_handler(tauri::generate_handler![engine::start_engine])
+        .invoke_handler(tauri::generate_handler![engine::start_engine, open_dashboard])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
@@ -112,35 +119,24 @@ pub fn run() {
                 "on_top",
                 "Sempre no topo",
                 true,
-                false,
+                true,
                 None::<&str>,
             )?;
-            let widget_i = MenuItem::with_id(app, "widget", "Widget flutuante", true, None::<&str>)?;
+            let dashboard_i = MenuItem::with_id(app, "dashboard", "Abrir painel completo ↗", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit_i = MenuItem::with_id(app, "quit", "Sair", true, Some("Cmd+Q"))?;
-            let menu = Menu::with_items(app, &[&toggle_i, &widget_i, &on_top_i, &sep, &quit_i])?;
+            let menu = Menu::with_items(app, &[&toggle_i, &dashboard_i, &on_top_i, &sep, &quit_i])?;
 
             let on_top_handle = on_top_i.clone();
             let _tray = TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().unwrap().clone())
-                .icon_as_template(true)
+                .icon(if cfg!(target_os = "macos") { tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))? } else { app.default_window_icon().unwrap().clone() })
+                .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("Consumo de IA")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "toggle" => toggle_main(app),
-                    "widget" => {
-                        if let Some(w) = app.get_webview_window("widget") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                        } else {
-                            let _ = tauri::WebviewWindowBuilder::new(app, "widget", tauri::WebviewUrl::External(
-                                "http://localhost:8090/widget?layout=horizontal&native=1".parse().unwrap()))
-                                .title("Consumo de IA · widget")
-                                .inner_size(504.0, 268.0).min_inner_size(380.0, 190.0)
-                                .transparent(true).decorations(false).always_on_top(true).build();
-                        }
-                    },
+                    "dashboard" => { let _ = open_dashboard(app.clone()); },
                     "on_top" => {
                         let next = on_top_handle.is_checked().unwrap_or(true);
                         if let Some(w) = app.get_webview_window("main") {

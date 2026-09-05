@@ -287,7 +287,7 @@ export default function Dashboard() {
   const activeQuotas = allQuotas.filter(l => l.value !== 0 || !l.ts || now - new Date(l.ts) > 900000);
   const idleQuotas = allQuotas.filter(l => l.value === 0 && l.ts && now - new Date(l.ts) <= 900000);
   return <div className="u-root"><main className="u-wrap">
-    <header className="u-top"><div><span className="u-eyebrow">AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
+    <header className="u-top"><div><span className="u-eyebrow"><img src="/brand.svg" alt="AI Usage" width="24" height="24" style={{ display: "inline-block", verticalAlign: "middle", marginRight: 8 }} />AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
     <section className="u-current-windows" aria-label="Consumo atual das janelas">
       <div className="u-heading"><h2>Janelas em uso</h2><small>Claude em laranja · Codex em verde</small></div>
       <div className="u-quota-strip">{activeQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div>
