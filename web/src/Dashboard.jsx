@@ -76,7 +76,7 @@ function Quota({
   trend
 }) {
   const stale = !ts || now - new Date(ts) > 15 * 60000;
-  return <div className="u-quota"><div className="u-heading"><strong>{label}</strong><span className="u-tag">{stale ? 'desatualizado' : 'conta · oficial'}</span></div><div className="u-quota-number">{pct(value)}<small>{value == null ? 'indisponível' : `${pct(Math.max(0, 100 - value))} disponível`}</small></div><Meter value={value} color={value >= 90 ? '#ff7171' : color} /><div className="u-heading"><small>Reset em {resetText(reset, now)}</small><small>{ts ? new Date(ts).toLocaleTimeString('pt-BR') : '—'}</small></div><p className="u-hint">{trend ? `${pct(trend.rate)}/h · projeção de ${pct(trend.projected)} no reset` : 'Acumulando histórico para projetar o ritmo.'}</p></div>;
+  return <div className="u-quota"><div className="u-heading"><strong>{label}</strong><span className="u-tag">{stale ? 'desatualizado' : 'conta · oficial'}</span></div><div className="u-quota-number">{pct(value)}<span className="u-used-label"> usado</span><small>{value == null ? 'indisponível' : `${pct(Math.max(0, 100 - value))} disponível`}</small></div><Meter value={value} color={value >= 90 ? '#ff7171' : color} /><div className="u-heading"><small>Reset em {resetText(reset, now)}</small><small>{ts ? new Date(ts).toLocaleTimeString('pt-BR') : '—'}</small></div><p className="u-hint">{trend ? `${pct(trend.rate)}/h · projeção de ${pct(trend.projected)} no reset` : 'Acumulando histórico para projetar o ritmo.'}</p></div>;
 }
 function Finance({
   label,
@@ -276,22 +276,22 @@ export default function Dashboard() {
   const extrasA = state.extra_usage?.used;
   const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
   return <div className="u-root"><main className="u-wrap">
-    <header className="u-top"><div><span className="u-eyebrow">AI USAGE / VISÃO UNIFICADA</span><h1>Seu consumo de IA<span>.</span></h1><p>Claude e ChatGPT, no mesmo ritmo.</p></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
+    <header className="u-top"><div><span className="u-eyebrow">AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
+    <div className="u-grid u-live-limits">
+      <Panel title="● Claude" note="Consumo atual das janelas" className="u-claude-limits"><div className="u-quota-grid">{Object.entries(state.windows || {}).map(([k, w]) => <Quota key={k} label={names[k] || k} value={w.utilization} reset={w.resets_at} ts={state.snapshot_ts} color={ORANGE} now={now} trend={w.projected != null && w.rate != null && now - new Date(state.snapshot_ts) < 900000 ? {
+              projected: w.projected,
+              rate: w.rate
+            } : null} />)}</div><details><summary>Orientação de modelo Claude</summary><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={state.config.intended_hours === h} onClick={() => save({
+                intended_hours: h
+              })}>+{h}h</button>)}</div><p>{state.switch?.message || state.switch?.reason || 'Consulte as cotas acima ao escolher o próximo modelo.'}</p></details></Panel>
+      <Panel title="● Codex · assinatura ChatGPT" className="u-codex-limits" note={cg.limits_error ? 'Falha na consulta · último snapshot' : 'Limites da assinatura · oficial'}><div className="u-quota-grid">{limits.map(l => <Quota key={l.key} {...l} color={GREEN} now={now} trend={quotaTrend(rows, l.key, l, now)} />)}</div><p className="u-hint">Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`} · consultas a cada 5 minutos. Chat comum, imagens e voz não incluídos.</p></Panel>
+    </div>
     <div className="u-grid u-overview">
       <Panel title="Tokens processados" note="Registros locais · histórico completo" className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
       <Panel title="Investimento mensal" note="Assinaturas informadas"><div className="u-medium">{money(fixed)}</div><p>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</p><p className="u-hint">Extras são contabilizados separadamente.</p></Panel>
       <Panel title="Valor equivalente neste mês" note="Estimativa de tokens em API"><div className="u-medium">{money(monthA != null && monthB != null ? monthA + monthB : null)}</div><p>{paid && monthB != null ? `${((monthA + monthB) / paid).toFixed(2)}× do custo total informado` : 'Informe os extras para comparar o custo total.'}</p><p className="u-hint">{cg.history?.mes?.unpriced_tokens ? 'Parcial: há modelos sem preço mapeado e/ou extras não informados.' : 'Tarifas padrão; não representa cobrança.'}</p></Panel>
     </div>
     <div className="u-advice"><span>LEITURA DO MOMENTO</span><p>{weekly ? `Codex: ${pct(weekly.value)} da cota semanal. ` : 'Cota Codex indisponível. '}{trend ? trend.projected >= 100 ? 'O ritmo observado pode esgotar a cota antes do reset; distribua o trabalho entre as plataformas.' : `Projeção de ${pct(trend.projected)} no reset; há margem no ritmo observado.` : 'A projeção ficará disponível após pelo menos 30 minutos de snapshots da mesma janela.'}</p></div>
-    <div className="u-grid u-two">
-      <Panel title="Claude" note="Limites da assinatura · oficial"><div className="u-quota-grid">{Object.entries(state.windows || {}).map(([k, w]) => <Quota key={k} label={names[k] || k} value={w.utilization} reset={w.resets_at} ts={state.snapshot_ts} color={ORANGE} now={now} trend={w.projected != null && w.rate != null && now - new Date(state.snapshot_ts) < 900000 ? {
-              projected: w.projected,
-              rate: w.rate
-            } : null} />)}</div><details><summary>Orientação de modelo Claude</summary><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={state.config.intended_hours === h} onClick={() => save({
-                intended_hours: h
-              })}>+{h}h</button>)}</div><p>{state.switch?.message || state.switch?.reason || 'Consulte as cotas acima ao escolher o próximo modelo.'}</p></details></Panel>
-      <Panel title="ChatGPT / Codex" note={cg.limits_error ? 'Falha na consulta · último snapshot' : 'Limites da assinatura · oficial'}><div className="u-quota-grid">{limits.map(l => <Quota key={l.key} {...l} color={GREEN} now={now} trend={quotaTrend(rows, l.key, l, now)} />)}</div><p className="u-hint">Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`} · consultas a cada 5 minutos. Chat comum, imagens e voz não incluídos.</p></Panel>
-    </div>
     <div className="u-grid u-two"><Panel title="Ritmo por modelo" note="Tokens/h · média das últimas 2 horas"><div className="u-medium">{fmtTokens(burnA + burnB)}<small> / hora</small></div><Split a={burnA} b={burnB} /><div className="u-models">{burn.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span><i style={{
                     color: r.color
                   }}>●</i> {r.model} <small>{r.provider}</small></span><strong>{fmtTokens(r.value)}/h</strong></div><Meter value={r.value / Math.max(1, ...burn.map(b => b.value)) * 100} color={r.color} /></div>)}</div></Panel>
