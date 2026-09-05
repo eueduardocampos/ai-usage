@@ -498,7 +498,7 @@ function dialFeedback(context) {
   if (AI_DIALS.includes(kind)) {
     const items = U.dialItems(latest, kind, cfg().percent === "remaining");
     const v = items[wrapIdx(s.aiIndex || 0, items.length || 1)] || {label:'IA',value:'--',level:'offline'};
-    return {title:`${v.label} · ${v.sub || ''}`,value:String(v.value),indicator:{value:Math.max(0,Math.min(100,v.pct || 0)),bar_fill_c:v.level==='safe' ? v.accent || R.colorForLevel(v.level) : R.colorForLevel(v.level)}};
+    return {canvas: R.toDataUri(R.clean(v, true))};
   }
 
   if (kind === "windows") {
@@ -583,6 +583,11 @@ function render(context) {
 
   const { metric, mode, histStyle } = settingsFor(context);
   const view = buildView(metric);
+  if (AI_KEYS.includes(metric) || metric === 'source') {
+    setImage(context, R.clean(view));
+    setTitle(context, '');
+    return;
+  }
   const resolved = resolveMode(view.kind, mode);
 
   // Flicker apaga a tecla em ciclos alternados, so no estado critico.

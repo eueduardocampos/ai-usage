@@ -186,7 +186,7 @@ function finish() {
 
   assert(decodeURIComponent(received.setImage.get('ctx-codexquota') || '').includes('7%'), 'Codex key uses own quota');
   assert(decodeURIComponent(received.setImage.get('ctx-codexroi') || '').includes('0.18x'), 'Codex ROI uses R$555 and exchange rate');
-  assert((received.setFeedback.get('ctx-aiburn') || {}).title?.includes('CODEX'), 'new burn dial rotated to Codex');
+  assert(decodeURIComponent((received.setFeedback.get('ctx-aiburn') || {}).canvas || '').includes('CODEX'), 'new burn dial rotated to Codex');
   child.kill();
   panel.close();
   wss.close();

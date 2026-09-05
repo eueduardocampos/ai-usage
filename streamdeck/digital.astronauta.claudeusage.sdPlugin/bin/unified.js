@@ -21,8 +21,8 @@ function quota(w,remaining=false,now=Date.now()) {
   if(!w || !num(w.used)) return missing(w?.label || 'JANELA');
   const shown=remaining?Math.max(0,100-w.used):w.used;
   const hours=(Date.parse(w.reset)-now)/3600000;
-  const reset=!Number.isFinite(hours)?'reset --':hours<=0?'reset pendente':hours>=24?`${Math.floor(hours/24)}d ${Math.floor(hours%24)}h`:`${Math.floor(hours)}h ${Math.floor(hours%1*60)}m`;
-  return {kind:'pct',label:w.label,value:`${Math.round(shown)}%${w.stale?'!':''}`,sub:w.stale?'dado antigo':`${remaining?'livre':'usado'} ${reset}`,pct:shown,barPct:shown,level:w.stale?'offline':w.used>=90?'danger':'safe',accent:COLORS[w.provider]};
+  const reset=!Number.isFinite(hours)?'--':hours<=0?'pendente':hours>=24?`${Math.floor(hours/24)}d ${Math.floor(hours%24)}h`:`${Math.floor(hours)}h ${Math.floor(hours%1*60)}m`;
+  return {kind:'pct',label:w.label,value:`${Math.round(shown)}%${w.stale?'!':''}`,sub:w.stale?'dado antigo':`reset ${reset}`,pct:shown,barPct:shown,level:w.stale?'offline':w.used>=90?'danger':'safe',accent:COLORS[w.provider]};
 }
 function burnRows(s) {
   if(!s)return [];

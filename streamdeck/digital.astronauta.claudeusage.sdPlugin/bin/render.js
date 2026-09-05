@@ -224,6 +224,33 @@ function blank(level) {
   return svg(txt(K / 2, K / 2 + 6, "", {}), level === "critical" ? "#2a0a12" : COLORS.bg);
 }
 
+/** Legibility-first: fixed non-overlapping zones, one number per surface. */
+function clean(view, dial = false) {
+  const {label = '', value = '--', sub = '', level, accent, pct} = view;
+  const color = level === 'safe' ? accent || '#ef985d' : colorForLevel(level);
+  const width = dial ? 200 : 144;
+  const height = dial ? 100 : 144;
+  const font = (text, max, available) => Math.min(max, available / Math.max(1,String(text).length) * 1.65);
+  const heading = label.replace(' /H','').replace(' ROI','').replace(' · TOKENS',' TOTAL');
+  const detail = sub.replace('tokens/h · 2h','tokens / hora').replace('API / gasto','retorno mensal').replace('sem extras inform.','retorno parcial');
+  let content = `<rect width="${width}" height="${height}" fill="#10151c"/>`;
+  if (dial) {
+    content += txt(12,22,heading,{anchor:'start',size:font(heading,16,176),fill:color,weight:'bold'});
+    content += txt(12,62,value,{anchor:'start',size:font(value,34,176),weight:'bold'});
+    content += txt(12,86,detail,{anchor:'start',size:font(detail,13,176),fill:'#acb8c8'});
+  } else {
+    content += `<rect x="12" y="8" width="120" height="4" rx="2" fill="${color}"/>`;
+    content += txt(72,34,heading,{size:font(heading,16,122),fill:color,weight:'bold'});
+    content += txt(72,88,value,{size:font(value,44,122),weight:'bold'});
+    content += txt(72,113,detail,{size:font(detail,14,122),fill:'#acb8c8'});
+  }
+  if (typeof pct === 'number') {
+    const y=dial?96:130;
+    content += `<rect x="12" y="${y}" width="${width-24}" height="4" rx="2" fill="#303a47"/><rect x="12" y="${y}" width="${(width-24)*Math.max(0,Math.min(100,pct))/100}" height="4" rx="2" fill="${color}"/>`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${content}</svg>`;
+}
+
 /** Ponto unico de entrada: escolhe o desenho pelo `mode`. */
 function draw(mode, view) {
   switch (mode) {
@@ -245,6 +272,7 @@ function toDataUri(svgString) {
 }
 
 module.exports = {
+  clean,
   COLORS,
   colorForLevel,
   escapeXml,
