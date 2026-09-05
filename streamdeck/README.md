@@ -1,4 +1,4 @@
-# Claude Usage no Stream Deck
+# AI Usage no Stream Deck
 
 Plugin oficial do painel para Elgato Stream Deck (Windows e macOS). Cada dado é
 uma **ação dedicada** — arraste a tecla e ela já funciona, sem configurar nada,
@@ -8,7 +8,24 @@ O plugin é vitrine, não coletor: ele lê `GET /api/state` e `/api/total` do
 painel local. Não fala com a API da Anthropic e não guarda chave nenhuma.
 Node puro, zero dependências.
 
-## Teclas
+## Perfil recomendado: Consumo de IA
+
+![Oito teclas e quatro dials com o novo visual](../docs/streamdeck.png)
+
+Prévia com dados demonstrativos. A versão 4.1 usa título curto, número grande,
+reset separado e barra apenas nas cotas. Claude em laranja; Codex em verde.
+
+| Linha | Tecla 1 | Tecla 2 | Tecla 3 | Tecla 4 |
+| --- | --- | --- | --- | --- |
+| Superior | Claude 5h | Claude 7d | Codex | Claude licença/extras |
+| Inferior | Claude tokens/h | Codex tokens/h | Claude retorno | Codex retorno |
+
+Os quatro dials mostram cotas, ritmo, equivalência e totais. Gire para alternar
+as métricas; pressione para abrir o painel. O toque atualiza a leitura local.
+
+## Ações clássicas
+
+### Teclas
 
 | Ação | Mostra |
 | --- | --- |
@@ -39,8 +56,10 @@ Pressionar abre o painel; tocar no strip força uma atualização.
 1. Baixe o `digital.astronauta.claudeusage.streamDeckPlugin` na
    [página de releases](https://github.com/eueduardocampos/claude-usage/releases)
    e dê **dois cliques** — o app do Stream Deck instala sozinho.
-2. (Stream Deck +) importe o perfil pronto `Claude Usage (SD+).streamDeckProfile`
-   do mesmo release: as 8 teclas e os 4 dials aparecem montados de uma vez.
+2. (Stream Deck +) importe [Consumo de IA.streamDeckProfile](Consumo%20de%20IA.streamDeckProfile): as oito teclas e os quatro dials aparecem montados de uma vez.
+
+Para obter a versão 4.1 diretamente deste repositório, use a instalação manual
+abaixo. Releases anteriores podem conter o visual clássico.
 
 Instalação manual (dev): copie a pasta `digital.astronauta.claudeusage.sdPlugin`
 para `%APPDATA%\Elgato\StreamDeck\Plugins\` (Windows) ou
@@ -94,7 +113,7 @@ Claude não desconecta a exibição do Codex. O plugin não cria uma janela Code
 5h quando a conta só fornece 7d. Spark sem dados mostra `--`.
 
 Retorno = equivalência de API dividida por assinatura + extras informados. Usa
-mensalidade e câmbio do painel (ChatGPT configurado em R$555 nesta instalação).
+mensalidade e câmbio configurados por você no painel.
 Modelos sem preço são identificados como parcial; saldo de créditos não é reais.
 O botão e a pressão no dial abrem o painel; toque atualiza a leitura local.
 

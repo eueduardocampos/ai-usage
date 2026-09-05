@@ -94,7 +94,7 @@ jobs:
           cd streamdeck
           zip -r ../digital.astronauta.claudeusage.streamDeckPlugin digital.astronauta.claudeusage.sdPlugin
           cd ..
-          cp "streamdeck/Claude Usage (SD+).streamDeckProfile" .
+          cp streamdeck/*.streamDeckProfile .
 
       - name: Anexar ao release
         env:
@@ -103,8 +103,12 @@ jobs:
           gh release upload "${{ github.ref_name }}" \
             "digital.astronauta.claudeusage.streamDeckPlugin" \
             "Claude Usage (SD+).streamDeckProfile" \
+            "AI Usage (SD+).streamDeckProfile" \
+            "Consumo de IA.streamDeckProfile" \
             --repo "${{ github.repository }}" --clobber || \
           gh release create "${{ github.ref_name }}" \
             "digital.astronauta.claudeusage.streamDeckPlugin" \
             "Claude Usage (SD+).streamDeckProfile" \
+            "AI Usage (SD+).streamDeckProfile" \
+            "Consumo de IA.streamDeckProfile" \
             --repo "${{ github.repository }}" --draft --title "${{ github.ref_name }}"
