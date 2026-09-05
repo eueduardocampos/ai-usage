@@ -101,3 +101,15 @@ O botão e a pressão no dial abrem o painel; toque atualiza a leitura local.
 As ações v3 e seus UUIDs continuam disponíveis. Gere o perfil com
 `python3 streamdeck/build_profile.py`. Testes: `node streamdeck/test/unified.js`
 e `node streamdeck/test/fake_sd.js` (inclui ações novas e legadas).
+
+### Perfil diário: Consumo de IA
+
+Importe `Consumo de IA.streamDeckProfile` para um perfil independente, preservando
+os anteriores. A linha superior mostra Claude 5h, Claude 7d, Codex e fonte de
+cobrança do Claude (licença/extras). A inferior mostra ritmo Claude/Codex e retorno
+mensal Claude/Codex. Spark fica no dial de cotas, evitando ocupar uma tecla com
+uso normalmente zerado. Os quatro dials mantêm cotas, ritmo, equivalência e totais.
+
+Prioridade diária: cota restante e cobrança extra. Ritmo ajuda a entender a carga;
+retorno mensal é uma referência de assinatura, não um incentivo a gastar tokens.
+Gere novamente com `python3 streamdeck/build_profile.py --daily`.
