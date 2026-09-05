@@ -76,7 +76,7 @@ function Quota({
   trend
 }) {
   const stale = !ts || now - new Date(ts) > 15 * 60000;
-  return <div className="u-quota"><div className="u-heading"><strong>{label}</strong><span className="u-tag">{stale ? 'desatualizado' : 'conta · oficial'}</span></div><div className="u-quota-number">{pct(value)}<span className="u-used-label"> usado</span><small>{value == null ? 'indisponível' : `${pct(Math.max(0, 100 - value))} disponível`}</small></div><Meter value={value} color={value >= 90 ? '#ff7171' : color} /><div className="u-heading"><small>Reset em {resetText(reset, now)}</small><small>{ts ? new Date(ts).toLocaleTimeString('pt-BR') : '—'}</small></div><p className="u-hint">{trend ? `${pct(trend.rate)}/h · projeção de ${pct(trend.projected)} no reset` : 'Acumulando histórico para projetar o ritmo.'}</p></div>;
+  return <div className="u-quota" data-stale={stale}><div className="u-heading"><strong>{label}</strong><span className="u-tag">{stale ? 'desatualizado' : 'conta · oficial'}</span></div><div className="u-quota-number">{pct(value)}<span className="u-used-label"> usado</span><small>{value == null ? 'indisponível' : `${pct(Math.max(0, 100 - value))} disponível`}</small></div><Meter value={value} color={value >= 90 ? '#ff7171' : color} /><div className="u-heading"><small>Reset em {resetText(reset, now)}</small><small>{ts ? new Date(ts).toLocaleTimeString('pt-BR') : '—'}</small></div><p className="u-hint">{trend ? `${pct(trend.rate)}/h · projeção de ${pct(trend.projected)} no reset` : 'Acumulando histórico para projetar o ritmo.'}</p></div>;
 }
 function Finance({
   label,
@@ -275,17 +275,28 @@ export default function Dashboard() {
   const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
   const extrasA = state.extra_usage?.used;
   const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
+  const allQuotas = [
+    ...Object.entries(state.windows || {}).map(([k, w]) => ({
+      key: `claude-${k}`, label: `Claude · ${names[k] || k}`, value: w.utilization,
+      reset: w.resets_at, ts: state.snapshot_ts, color: ORANGE,
+      trend: w.projected != null && w.rate != null && now - new Date(state.snapshot_ts) < 900000
+        ? { projected: w.projected, rate: w.rate } : null,
+    })),
+    ...limits.map(l => ({ ...l, color: GREEN, trend: quotaTrend(rows, l.key, l, now) })),
+  ];
+  const activeQuotas = allQuotas.filter(l => l.value !== 0 || !l.ts || now - new Date(l.ts) > 900000);
+  const idleQuotas = allQuotas.filter(l => l.value === 0 && l.ts && now - new Date(l.ts) <= 900000);
   return <div className="u-root"><main className="u-wrap">
     <header className="u-top"><div><span className="u-eyebrow">AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
-    <div className="u-grid u-live-limits">
-      <Panel title="● Claude" note="Consumo atual das janelas" className="u-claude-limits"><div className="u-quota-grid">{Object.entries(state.windows || {}).map(([k, w]) => <Quota key={k} label={names[k] || k} value={w.utilization} reset={w.resets_at} ts={state.snapshot_ts} color={ORANGE} now={now} trend={w.projected != null && w.rate != null && now - new Date(state.snapshot_ts) < 900000 ? {
-              projected: w.projected,
-              rate: w.rate
-            } : null} />)}</div><details><summary>Orientação de modelo Claude</summary><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={state.config.intended_hours === h} onClick={() => save({
-                intended_hours: h
-              })}>+{h}h</button>)}</div><p>{state.switch?.message || state.switch?.reason || 'Consulte as cotas acima ao escolher o próximo modelo.'}</p></details></Panel>
-      <Panel title="● Codex · assinatura ChatGPT" className="u-codex-limits" note={cg.limits_error ? 'Falha na consulta · último snapshot' : 'Limites da assinatura · oficial'}><div className="u-quota-grid">{limits.map(l => <Quota key={l.key} {...l} color={GREEN} now={now} trend={quotaTrend(rows, l.key, l, now)} />)}</div><p className="u-hint">Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`} · consultas a cada 5 minutos. Chat comum, imagens e voz não incluídos.</p></Panel>
-    </div>
+    <section className="u-current-windows" aria-label="Consumo atual das janelas">
+      <div className="u-heading"><h2>Janelas em uso</h2><small>Claude em laranja · Codex em verde</small></div>
+      <div className="u-quota-strip">{activeQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div>
+      {!activeQuotas.length && <p>Nenhuma janela com consumo no último snapshot.</p>}
+      <div className="u-window-details">
+        {idleQuotas.length > 0 && <details><summary>{idleQuotas.length} janelas sem consumo · {idleQuotas.map(l => l.label.replace('GPT-5.3-Codex-', '')).join(' / ')}</summary><div className="u-quota-strip">{idleQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div></details>}
+        <details><summary>Detalhes da conta e orientação Claude</summary><p>Codex: {cg.limits_error ? 'consulta com falha; exibindo último snapshot' : 'janelas retornadas pela conta'}. Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`}. Chat comum, imagens e voz não incluídos.</p><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={state.config.intended_hours === h} onClick={() => save({intended_hours:h})}>+{h}h</button>)}</div><p>{state.switch?.message || 'Consulte as cotas ao escolher o próximo modelo.'}</p></details>
+      </div>
+    </section>
     <div className="u-grid u-overview">
       <Panel title="Tokens processados" note="Registros locais · histórico completo" className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
       <Panel title="Investimento mensal" note="Assinaturas informadas"><div className="u-medium">{money(fixed)}</div><p>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</p><p className="u-hint">Extras são contabilizados separadamente.</p></Panel>
