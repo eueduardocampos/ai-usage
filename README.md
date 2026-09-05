@@ -17,12 +17,22 @@ Ele junta duas fontes:
    de excedente.
 
 Quando o Codex Desktop ou CLI está instalado, o painel também cria uma área
-separada para a **assinatura ChatGPT**. Ela lê somente os contadores locais em
-`~/.codex/sessions`: volume de tokens, modelos e os percentuais de limite que o
-próprio Codex registra. Isso não usa nem mede a API paga da OpenAI.
+integrada para a **assinatura ChatGPT usada pelo Codex**. Os tokens são lidos de
+`~/.codex/sessions`. A cota é consultada a cada cinco minutos usando o OAuth
+existente em `~/.codex/auth.json`, sem copiar ou renovar credenciais. Snapshots
+são guardados na tabela `codex_limits` do banco local por 90 dias.
 
-Os percentuais são da cota do **Codex incluída na assinatura ChatGPT**. Chat
-comum, imagens, voz e uploads têm limites separados e não entram neste painel.
+O dashboard compara as plataformas com cores consistentes (Claude laranja,
+ChatGPT verde), ritmo por modelo, cotas, histórico e equivalência de API.
+A mensalidade é configurável, assim como compras extras no mês. Créditos não
+são convertidos automaticamente em dinheiro. O cálculo de equivalência usa
+preços padrão de texto verificados em 05/09/2026 e separa modelos sem preço.
+Raciocínio já está incluído na saída; cache lido é cobrado separadamente da
+entrada nova. Ferramentas, Fast e cache writes não registrados são excluídos.
+Projeções de cota exigem 30 minutos na mesma janela; projeções financeiras
+exigem três dias observados. Não há inferência de capacidade total por tokens.
+
+Chat comum, imagens, voz e uploads não entram nesta medição.
 
 Sessões importadas do Claude para o Codex são reconhecidas por
 `~/.codex/external_agent_session_imports.json`. O histórico importado continua

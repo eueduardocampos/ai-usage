@@ -1,1199 +1,370 @@
-/**
- * Dashboard.jsx — cockpit "mission control" do consumo do Claude.
- *
- * Dark-first, denso e em tempo quase real:
- *   /api/total   a cada 3s  (contador vivo)
- *   /api/state   a cada 10s (janelas, veredito, custo)
- *   /api/history a cada 60s (graficos)
- *   tick local de 1s para countdowns de reset.
- *
- * Responsivo por grid fluido (auto-fit) — de Full HD a 4K ultrawide o layout
- * ganha colunas em vez de esticar uma coluna central.
- */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Chart, registerables } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import { api } from './api';
-import { fmtTokens, fmtMoneyUSD, fmtMoney, fmtInt } from './format';
+import { fmtTokens, fmtMoney, fmtInt } from './format';
 import HeatmapChart from './components/HeatmapChart';
-
+import './dashboard.css';
 Chart.register(...registerables);
-
-// design system Astronauta sobre navy #050A30 — serie validada pelo
-// validate_palette da skill dataviz (#4285ee / #d96d0d / #cc0099, modo dark)
-const C = {
-  page: '#050a30', // navy da marca (CTAFinal / ProposalHero)
-  card: '#0a1140',
-  border: 'rgba(255,255,255,0.10)',
-  ink: '#ffffff',
-  ink2: '#c9d2f2',
-  muted: '#8590c2',
-  grid: '#1b2452',
-  s1: '#4285ee', // azul secundario da marca (simbolo)
-  s2: '#d96d0d', // brand-orange, um passo mais escuro p/ o navy
-  s3: '#cc0099', // brand-magenta
-  brand: '#004fff', // Azul Astronauta — acoes e destaque
-  good: '#21c45d', // --success
-  warn: '#facc14', // --warning
-  crit: '#f2404c', // --destructive
-  openai: '#10a37f',
+const ORANGE = '#ef985d',
+  GREEN = '#45d6aa';
+const money = v => v == null ? '—' : fmtMoney(v, 'BRL');
+const pct = v => v == null ? '—' : `${v.toFixed(1)}%`;
+const scopes = [['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ['geral', 'Histórico']];
+const names = {
+  five_hour: 'Sessão · 5 horas',
+  seven_day: 'Semana · 7 dias',
+  seven_day_sonnet: 'Sonnet · 7 dias'
 };
-const WIN_COLORS = { five_hour: C.s1, seven_day: C.s2, seven_day_sonnet: C.s3 };
-const WIN_SHORT = { five_hour: 'SESSÃO 5H', seven_day: 'SEMANA 7D', seven_day_sonnet: 'SONNET 7D' };
-const STATUS_C = { SEGURO: C.good, ATENCAO: C.warn, RISCO: C.crit };
-const STATUS_LABEL = { SEGURO: 'seguro', ATENCAO: 'atenção', RISCO: 'risco' };
-
-// ---------------------------------------------------------------- helpers
-
-function statusColor(s) {
-  return STATUS_C[(s || '').toUpperCase()] || C.muted;
+function resetText(value, now) {
+  const h = (new Date(value).getTime() - now) / 3600000;
+  return !Number.isFinite(h) ? 'sem previsão' : h <= 0 ? 'aguardando reset' : h >= 24 ? `${Math.floor(h / 24)}d ${Math.floor(h % 24)}h` : `${Math.floor(h)}h ${Math.floor(h % 1 * 60)}m`;
 }
-
-/** Os valores de custo ja SAO em reais (o "$" da fonte e erro de rotulo,
- *  nao dolar de verdade) — entao so trocamos o simbolo, sem converter. */
-function costBRL(v) {
-  if (v == null) return '—';
-  return fmtMoney(v, 'BRL');
+function Panel({
+  title,
+  note,
+  children,
+  className = ''
+}) {
+  return <section className={`u-panel ${className}`}><div className="u-heading"><h2>{title}</h2>{note && <small>{note}</small>}</div>{children}</section>;
 }
-
-function modelShort(m) {
-  return String(m || '')
-    .replace(/^claude-/, '')
-    .replace(/-\d{8}$/, '');
+function Split({
+  a = 0,
+  b = 0
+}) {
+  const total = a + b;
+  return <><div className="u-split" aria-label={`Claude ${pct(total ? a / total * 100 : 0)}, ChatGPT ${pct(total ? b / total * 100 : 0)}`}><i style={{
+        width: `${total ? a / total * 100 : 0}%`,
+        background: ORANGE
+      }} /><i style={{
+        width: `${total ? b / total * 100 : 0}%`,
+        background: GREEN
+      }} /></div><div className="u-legend"><span style={{
+        color: ORANGE
+      }}>● Claude {fmtTokens(a)} · {pct(total ? a / total * 100 : 0)}</span><span style={{
+        color: GREEN
+      }}>● ChatGPT {fmtTokens(b)} · {pct(total ? b / total * 100 : 0)}</span></div></>;
 }
-
-function fmtCountdown(iso, now) {
-  if (!iso) return '—';
-  const ms = new Date(iso).getTime() - now;
-  if (!isFinite(ms)) return '—';
-  if (ms <= 0) return 'resetando…';
-  const s = Math.floor(ms / 1000);
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
-  return `${m}m ${String(ss).padStart(2, '0')}s`;
+function Meter({
+  value,
+  color
+}) {
+  return <div className="u-meter"><i style={{
+      width: `${Math.min(100, Math.max(0, value || 0))}%`,
+      background: color
+    }} /></div>;
 }
-
-function ago(iso, now) {
-  if (!iso) return '—';
-  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+function quotaTrend(rows, key, current, now) {
+  if (!current || now - new Date(current.ts).getTime() > 15 * 60000) return null;
+  const matching = rows.filter(r => r.key === key && r.reset === current.reset && r.value <= current.value && new Date(r.ts).getTime() <= new Date(current.ts).getTime());
+  const first = matching[0];
+  const hours = first && (new Date(current.ts) - new Date(first.ts)) / 3600000;
+  if (!hours || hours < .5) return null;
+  const rate = (current.value - first.value) / hours;
+  return {
+    rate,
+    projected: current.value + rate * Math.max(0, (new Date(current.reset) - now) / 3600000)
+  };
 }
-
-function useNow(ms = 1000) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), ms);
-    return () => clearInterval(id);
-  }, [ms]);
-  return now;
+function Quota({
+  label,
+  value,
+  reset,
+  color,
+  now,
+  ts,
+  trend
+}) {
+  const stale = !ts || now - new Date(ts) > 15 * 60000;
+  return <div className="u-quota"><div className="u-heading"><strong>{label}</strong><span className="u-tag">{stale ? 'desatualizado' : 'conta · oficial'}</span></div><div className="u-quota-number">{pct(value)}<small>{value == null ? 'indisponível' : `${pct(Math.max(0, 100 - value))} disponível`}</small></div><Meter value={value} color={value >= 90 ? '#ff7171' : color} /><div className="u-heading"><small>Reset em {resetText(reset, now)}</small><small>{ts ? new Date(ts).toLocaleTimeString('pt-BR') : '—'}</small></div><p className="u-hint">{trend ? `${pct(trend.rate)}/h · projeção de ${pct(trend.projected)} no reset` : 'Acumulando histórico para projetar o ritmo.'}</p></div>;
 }
-
-/** interpola o numero exibido ate o alvo (contador "vivo") */
-function useAnimated(target, dur = 800) {
-  const [val, setVal] = useState(target ?? 0);
-  const fromRef = useRef(target ?? 0);
-  useEffect(() => {
-    if (target == null) return;
-    const from = fromRef.current;
-    const to = target;
-    if (from === to) return;
-    const t0 = performance.now();
-    let raf;
-    const step = (t) => {
-      const k = Math.min(1, (t - t0) / dur);
-      const eased = 1 - Math.pow(1 - k, 3);
-      const v = from + (to - from) * eased;
-      setVal(v);
-      fromRef.current = v;
-      if (k < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [target, dur]);
-  return val;
+function Finance({
+  label,
+  color,
+  summary,
+  fixed,
+  extra,
+  fx,
+  openai,
+  now
+}) {
+  const value = openai ? fx && summary ? summary.equivalent_usd * fx : null : summary?.total_cost;
+  const partial = openai && summary?.unpriced_tokens > 0;
+  const totalPaid = fixed == null ? null : fixed + (extra ?? 0);
+  const ratio = totalPaid > 0 && value != null ? value / totalPaid : null;
+  const today = new Date(now);
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const observed = openai && summary?.first_event ? Math.min(today.getDate(), (now - new Date(summary.first_event)) / 86400000) : today.getDate();
+  const remaining = daysInMonth - today.getDate();
+  const projected = observed >= 3 && value != null ? value + value / observed * remaining : null;
+  return <div className="u-finance" style={{
+    '--provider': color
+  }}><div className="u-heading"><h3>{label}</h3><span className="u-tag">{partial ? 'estimativa parcial' : 'equivalência estimada'}</span></div><div className="u-money">{money(value)}</div><p>em tokens equivalentes de API neste mês</p><div className="u-finance-facts"><span>Assinatura <b>{money(fixed)}/mês</b></span><span>Extras pagos no mês <b>{money(extra)}</b></span><span>Custo fixo semanal <b>{money(fixed == null ? null : fixed * 12 / 52)}</b></span></div><Meter value={ratio == null ? 0 : ratio * 100} color={color} /><h4>{ratio == null ? 'Informe os custos para comparar' : ratio >= 1 ? `${ratio.toFixed(2)}× do custo pago em valor equivalente` : `${money(Math.max(0, totalPaid - value))} até o equilíbrio com API`}</h4><p>{ratio == null ? 'Informe a mensalidade nas configurações.' : ratio >= 1 ? `Diferença estimada: +${money(value - totalPaid)}${partial ? ' nos modelos com preço conhecido' : ''}.` : 'O retorno financeiro ainda está em acompanhamento.'}</p><p className="u-hint">{extra == null ? 'Comparação somente com a mensalidade; extras ainda não informados. ' : ''}{partial ? `${fmtTokens(summary.unpriced_tokens)} tokens sem preço publicado mapeado; não tratados como gratuitos. ` : ''}{openai ? 'Chat, voz e imagens fora do Codex não estão medidos.' : 'Base: cálculo de custos existente do Claude.'}</p><details><summary>Projeção de fechamento · cenários</summary>{projected == null ? <p>São necessários pelo menos três dias observados para uma projeção.</p> : <p>Conservador {money(value + (projected - value) * .7)} · atual {money(projected)} · intenso {money(value + (projected - value) * 1.3)}. Cenários de ±30% do ritmo médio observado, sem garantia de uso futuro. Volume no ritmo atual: {fmtTokens((summary?.total_tokens || 0) * (1 + remaining / observed))} tokens no mês.</p>}</details></div>;
 }
-
-// ---------------------------------------------------------------- atoms
-
-function Card({ children, className = '', style }) {
-  return (
-    <div className={`mc-card p-4 ${className}`} style={style}>
-      {children}
-    </div>
-  );
-}
-
-function Chip({ color, children }) {
-  return (
-    <span
-      className="mc-num inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider"
-      style={{ color, background: `${color}1f`, border: `1px solid ${color}55` }}
-    >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-      {children}
-    </span>
-  );
-}
-
-/** barra de janela: preenchimento = uso atual, marcador = projecao no reset */
-function GaugeBar({ pct, projected, color }) {
-  const cur = Math.min(100, Math.max(0, pct || 0));
-  const proj = projected == null ? null : Math.min(100, Math.max(0, projected));
-  return (
-    <div className="relative h-2.5 w-full overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
-      <div
-        className="h-full rounded-full transition-[width] duration-700"
-        style={{ width: `${cur}%`, background: color }}
-      />
-      {proj != null && proj > cur && (
-        <div
-          className="absolute inset-y-0 rounded-full opacity-35 transition-[width,left] duration-700"
-          style={{ left: `${cur}%`, width: `${proj - cur}%`, background: color }}
-        />
-      )}
-      {proj != null && (
-        <div
-          className="absolute top-[-2px] bottom-[-2px] w-[2px] transition-[left] duration-700"
-          style={{ left: `calc(${proj}% - 1px)`, background: C.ink2 }}
-          title={`projeção no reset: ${Math.round(proj)}%`}
-        />
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- seções
-
-function StatusBar({ state, latency, now, onRefresh, onReconnect, aviso }) {
-  const connected = state?.auth_connected;
-  // 429 e limite de requisicoes da conta, nao token invalido: mostra espera,
-  // nunca oferece "reconectar" (reconectar gera mais requisicoes e piora).
-  const limitado = !!state?.rate_limited;
-  const err = state?.last_error;
-  const situacao = !state
-    ? 'conectando…'
-    : limitado
-      ? `limite da conta · nova tentativa em ${state.retry_in}s`
-      : connected
-        ? 'conta conectada'
-        : 'desconectado';
-  return (
-    <header
-      className="sticky top-0 z-10 border-b backdrop-blur"
-      style={{ borderColor: C.border, background: 'rgba(5,10,48,0.88)' }}
-    >
-      <div className="mx-auto flex w-full max-w-[2400px] flex-wrap items-center gap-x-5 gap-y-1 px-4 py-2.5 sm:px-6 xl:px-8">
-        <div className="flex items-center gap-2.5">
-          <span className={`mc-live ${limitado ? 'warn' : connected ? '' : 'off'}`} />
-          <div className="leading-tight">
-            <div className="text-[13px] font-bold tracking-wide">AI USAGE · OPS</div>
-            <div className="mc-label">{situacao}</div>
-          </div>
-        </div>
-
-        <div className="mc-num hidden items-center gap-4 text-[12px] sm:flex" style={{ color: C.muted }}>
-          <span>
-            snapshot{' '}
-            <span
-              style={{
-                color:
-                  state?.snapshot_ts && now - new Date(state.snapshot_ts).getTime() > 150000
-                    ? C.warn
-                    : C.ink2,
-              }}
-            >
-              {ago(state?.snapshot_ts, now)}
-            </span>
-          </span>
-          <span>
-            api <span style={{ color: C.ink2 }}>{latency == null ? '—' : `${Math.round(latency)}ms`}</span>
-          </span>
-          {err && !limitado && (
-            <span className="max-w-[40ch] truncate" style={{ color: C.warn }} title={err}>
-              ⚠ {err}
-            </span>
-          )}
-          {aviso && (
-            <span style={{ color: C.warn }} title={aviso}>
-              {aviso}
-            </span>
-          )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-3">
-          <span className="mc-num text-[13px]" style={{ color: C.ink2 }}>
-            {new Date(now).toLocaleTimeString('pt-BR')}
-          </span>
-          {!connected && !limitado && state && (
-            <button className="mc-btn" style={{ color: C.warn, borderColor: `${C.warn}66` }} onClick={onReconnect}>
-              reconectar
-            </button>
-          )}
-          <button className="mc-btn" onClick={onRefresh}>
-            atualizar
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function VerdictPanel({ sw, intendedHours, dominant, onChangeHours }) {
-  const color = statusColor(sw?.verdict);
-  const hours = [
-    [0.5, '30m'], [1, '1h'], [2, '2h'], [3, '3h'], [4, '4h'],
-  ];
-  return (
-    <Card className="flex h-full flex-col justify-between gap-4">
-      <div>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <span className="mc-label">é seguro trocar de modelo?</span>
-          {sw?.verdict && <Chip color={color}>{sw.verdict}</Chip>}
-        </div>
-        <div className="mc-display text-xl font-bold leading-snug xl:text-2xl" style={{ color: sw ? C.ink : C.muted }}>
-          {sw?.message || 'coletando dados…'}
-        </div>
-        <div className="mc-num mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px]" style={{ color: C.muted }}>
-          {sw?.windows &&
-            Object.entries(sw.windows).map(([k, w]) => (
-              <span key={k}>
-                {WIN_SHORT[k] || k} → <span style={{ color: statusColor(w.status) }}>{Math.round(w.projected)}%</span>
-              </span>
-            ))}
-          {dominant && <span>modelo atual: {modelShort(dominant)}</span>}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="mc-label mr-1">pretendo trabalhar mais</span>
-        {hours.map(([v, l]) => (
-          <button
-            key={v}
-            className="mc-pill"
-            data-active={intendedHours === v}
-            onClick={() => onChangeHours(v)}
-          >
-            {l}
-          </button>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-function LiveTotal({ total, today, burn, burnBySource, burnModels, dominant, fx }) {
-  // legenda da queima: origem quando ha Science ativo; senao o modelo dominante,
-  // com +N quando mais de um modelo entra na soma
-  const burnParts = [];
-  if (burnBySource?.code > 0) burnParts.push(`code ${fmtTokens(burnBySource.code)}/h`);
-  if (burnBySource?.science > 0) burnParts.push(`science ${fmtTokens(burnBySource.science)}/h`);
-  const lead = modelShort(dominant);
-  const byModel = lead && burnModels > 1 ? `${lead} +${burnModels - 1}` : lead;
-  const burnLegend = burnParts.length > 1 ? burnParts.join(' · ') : byModel;
-  const tokens = useAnimated(total?.total_tokens, 900);
-  return (
-    <Card className="flex h-full flex-col justify-between gap-4">
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <span className="mc-label">total de tokens · vida toda</span>
-          <span className="mc-label" style={{ color: C.good }}>
-            live
-          </span>
-        </div>
-        <div className="mc-num text-4xl font-black tracking-tight xl:text-5xl" style={{ color: C.ink }}>
-          {fmtInt(Math.round(tokens))}
-        </div>
-        <div className="mc-num mt-1 text-[13px]" style={{ color: C.muted }}>
-          {costBRL(total?.total_cost)} estimado
-          {fx && total?.total_cost != null ? ` (≈ ${fmtMoneyUSD(total.total_cost / fx)})` : ''} ·{' '}
-          {fmtInt(total?.total_turns)} interações
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <div className="mc-label">hoje</div>
-          <div className="mc-num text-lg font-semibold">{fmtTokens(today?.total_tokens)}</div>
-          <div className="mc-num text-[12px]" style={{ color: C.muted }}>
-            {costBRL(today?.total_cost, fx)}
-          </div>
-        </div>
-        <div>
-          <div className="mc-label">queima agora</div>
-          <div className="mc-num text-lg font-semibold">
-            {burn ? `${fmtTokens(burn)}/h` : '—'}
-          </div>
-          <div className="mc-num text-[12px]" style={{ color: C.muted }}>
-            {burnLegend || '—'}
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function WindowCard({ k, w, now, snapshotTs }) {
-  const color = WIN_COLORS[k] || C.s1;
-  const st = statusColor(w.status);
-  // O numero vem do ultimo snapshot, nao de agora. Em uso pesado ele anda
-  // ~1 ponto/min, entao esconder a idade faria a tecla mentir por omissao.
-  const idade = snapshotTs ? Math.round((now - new Date(snapshotTs).getTime()) / 1000) : 0;
-  const velho = idade > 150;
-  return (
-    <Card>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="mc-label" style={{ color: C.ink2 }}>
-          <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: color }} />
-          {WIN_SHORT[k] || w.label}
-        </span>
-        <Chip color={st}>{STATUS_LABEL[(w.status || '').toUpperCase()] || w.status || '—'}</Chip>
-      </div>
-      <div className="flex items-baseline gap-2">
-        <span className="mc-num text-3xl font-bold">{Math.round(w.utilization)}%</span>
-        {velho && (
-          <span className="mc-num text-[12px]" style={{ color: C.warn }} title="idade do último snapshot da API">
-            há {idade < 120 ? `${idade}s` : `${Math.round(idade / 60)}min`}
-          </span>
-        )}
-        {w.projected != null && (
-          <span className="mc-num text-[13px]" style={{ color: C.muted }}>
-            → {Math.round(w.projected)}% no reset
-          </span>
-        )}
-      </div>
-      <div className="mt-3">
-        <GaugeBar pct={w.utilization} projected={w.projected} color={color} />
-      </div>
-      <div className="mc-num mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[12px]" style={{ color: C.muted }}>
-        <span>
-          reset em{' '}
-          <span className="font-semibold" style={{ color: C.ink2 }}>
-            {fmtCountdown(w.resets_at, now)}
-          </span>
-        </span>
-        {w.rate != null && <span>{w.rate.toFixed(1)} %/h</span>}
-        {w.eta_100 && (
-          <span style={{ color: C.crit }}>
-            estoura {new Date(w.eta_100).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function windowDuration(minutes) {
-  if (!minutes) return 'janela';
-  if (minutes % 10080 === 0) return `${minutes / 10080} semana${minutes > 10080 ? 's' : ''}`;
-  if (minutes % 1440 === 0) return `${minutes / 1440} dia${minutes > 1440 ? 's' : ''}`;
-  if (minutes % 60 === 0) return `${minutes / 60}h`;
-  return `${minutes}min`;
-}
-
-function ChatGPTLimit({ label, window, now, snapshotTs }) {
-  const pct = window?.used_percent;
-  const remaining = pct == null ? null : Math.max(0, 100 - pct);
-  const color = pct >= 90 ? C.crit : pct >= 70 ? C.warn : C.openai;
-  return (
-    <div className="rounded-xl border p-3" style={{ borderColor: C.border, background: 'rgba(16,163,127,0.06)' }}>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="mc-label" style={{ color: C.ink2 }}>{label} · {windowDuration(window?.window_minutes)}</span>
-        <span className="mc-num text-[11px]" style={{ color: C.muted }}>{ago(snapshotTs, now)}</span>
-      </div>
-      <div className="flex items-baseline gap-2">
-        <span className="mc-num text-3xl font-bold">{pct == null ? '—' : `${Math.round(pct)}%`}</span>
-        <span className="mc-num text-[12px]" style={{ color: C.muted }}>
-          {remaining == null ? 'uso indisponível' : `${Math.round(remaining)}% disponível`}
-        </span>
-      </div>
-      <div className="mt-3"><GaugeBar pct={pct} color={color} /></div>
-      <div className="mc-num mt-2 text-[12px]" style={{ color: C.muted }}>
-        reset em <span style={{ color: C.ink2 }}>{fmtCountdown(window?.resets_at, now)}</span>
-      </div>
-    </div>
-  );
-}
-
-function ChatGPTPanel({ chatgpt, now, subscription, onSaveSubscription }) {
-  const [subInput, setSubInput] = useState('');
-  const history = chatgpt?.history || {};
-  const limits = [];
-  (chatgpt?.limits || []).forEach((limit) => {
-    const name = limit.name || (limit.id === 'codex' ? 'Codex' : limit.id);
-    if (limit.primary) limits.push({ key: `${limit.id}-primary`, label: name, window: limit.primary, ts: limit.snapshot_ts });
-    if (limit.secondary) limits.push({ key: `${limit.id}-secondary`, label: name, window: limit.secondary, ts: limit.snapshot_ts });
-  });
-  const plan = chatgpt?.limits?.find((l) => l.plan_type)?.plan_type;
-  const creditInfo = chatgpt?.limits?.find((l) => l.credits)?.credits;
-  const creditBalance = creditInfo?.balance;
-  const hasCredits = creditInfo?.has_credits ?? creditInfo?.hasCredits;
-  const weekly = limits.find((item) => item.window?.window_minutes === 10080 && item.label === 'Codex');
-  const weeklyPct = weekly?.window?.used_percent;
-  const weeklyCost = subscription != null ? subscription * 12 / 52 : null;
-  const resetMs = weekly?.window?.resets_at ? new Date(weekly.window.resets_at).getTime() - now : null;
-  const closing = resetMs != null && resetMs < 24 * 3600 * 1000;
-  const valueLabel = weeklyPct == null
-    ? 'aguardando limite'
-    : closing
-      ? weeklyPct >= 70 ? 'licença bem utilizada' : weeklyPct >= 35 ? 'uso moderado' : 'uso baixo nesta semana'
-      : 'acompanhando esta semana';
-  return (
-    <Card>
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="mc-label" style={{ color: C.openai }}>CHATGPT · CODEX</div>
-          <div className="mc-display mt-1 text-xl font-bold">Assinatura ChatGPT · cota do Codex</div>
-          <div className="mc-num mt-1 text-[12px]" style={{ color: C.muted }}>
-            não inclui chat comum, imagens, voz ou uploads · atualiza a cada {chatgpt?.limits_refresh_seconds || 300}s{plan ? ` · plano ${plan}` : ''}
-          </div>
-        </div>
-        <Chip color={chatgpt?.available ? C.openai : C.warn}>
-          {chatgpt?.available ? 'medição local ativa' : 'aguardando Codex'}
-        </Chip>
-      </div>
-
-      <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-[1fr_auto] md:items-end" style={{ borderColor: C.border }}>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <div className="mc-label">uso semanal do Codex</div>
-            <div className="mc-num mt-1 text-lg font-semibold">{weeklyPct == null ? '—' : `${Math.round(weeklyPct)}%`}</div>
-            <div className="mc-num text-[11px]" style={{ color: C.openai }}>{valueLabel}</div>
-          </div>
-          <div>
-            <div className="mc-label">assinatura mensal</div>
-            <div className="mc-num mt-1 text-lg font-semibold">{subscription == null ? '—' : fmtMoney(subscription, 'BRL')}</div>
-            <div className="mc-num text-[11px]" style={{ color: C.muted }}>valor efetivamente pago</div>
-          </div>
-          <div>
-            <div className="mc-label">custo fixo por semana</div>
-            <div className="mc-num mt-1 text-lg font-semibold">{weeklyCost == null ? '—' : fmtMoney(weeklyCost, 'BRL')}</div>
-            <div className="mc-num text-[11px]" style={{ color: C.muted }}>mensal × 12 ÷ 52</div>
-          </div>
-        </div>
-        <div className="flex items-end gap-2">
-          <div>
-            <div className="mc-label">quanto você paga (R$)</div>
-            <input
-              className="mc-input"
-              placeholder={subscription != null ? String(subscription) : 'ex.: 999'}
-              value={subInput}
-              onChange={(e) => setSubInput(e.target.value)}
-            />
-          </div>
-          <button className="mc-btn" onClick={() => {
-            const value = parseFloat(subInput.replace(',', '.'));
-            if (!Number.isNaN(value) && value >= 0) onSaveSubscription(value);
-            setSubInput('');
-          }}>salvar</button>
-        </div>
-      </div>
-
-      <div className="grid gap-3 xl:grid-cols-12">
-        <div className="grid gap-3 sm:grid-cols-2 xl:col-span-7">
-          {limits.length > 0 ? limits.map((item) => (
-            <ChatGPTLimit key={item.key} label={item.label} window={item.window} now={now} snapshotTs={item.ts} />
-          )) : (
-            <div className="mc-num rounded-xl border p-3 text-[13px] sm:col-span-2" style={{ borderColor: C.border, color: C.muted }}>
-              o limite aparece depois da primeira resposta do Codex
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 xl:col-span-5">
-          {[
-            ['hoje', history.dia],
-            ['esta semana', history.semana],
-            ['este mês', history.mes],
-            ['queima agora', { total_tokens: chatgpt?.burn_tokph }],
-          ].map(([label, data]) => (
-            <div key={label} className="rounded-xl border p-3" style={{ borderColor: C.border }}>
-              <div className="mc-label">{label}</div>
-              <div className="mc-num mt-1 text-xl font-semibold">
-                {fmtTokens(data?.total_tokens)}{label === 'queima agora' ? '/h' : ''}
-              </div>
-              {data?.calls != null && (
-                <div className="mc-num text-[11px]" style={{ color: C.muted }}>{fmtInt(data.calls)} chamadas</div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="mc-num mt-3 border-t pt-3 text-[11px]" style={{ borderColor: C.border, color: C.muted }}>
-        {fmtInt(chatgpt?.ignored_imported_sessions)} sessões importadas do Claude ignoradas
-        {chatgpt?.resumed_imported_sessions > 0
-          ? ` · ${fmtInt(chatgpt.resumed_imported_sessions)} retomada no Codex (contando apenas o uso novo)`
-          : ''}
-        {chatgpt?.native_sessions > 0 ? ` · ${fmtInt(chatgpt.native_sessions)} sessões nativas` : ''}
-        {' · tokens processados; cache já incluído na entrada'}
-      </div>
-
-      <div className="mt-4 border-t pt-4" style={{ borderColor: C.border }}>
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="mc-label" style={{ color: C.openai }}>CENTRAL OPENAI</div>
-            <div className="mc-num mt-1 text-[12px]" style={{ color: C.muted }}>
-              o painel atualiza o Codex automaticamente; os demais recursos abrem na conta oficial
-            </div>
-          </div>
-          <div className="mc-num text-[12px]" style={{ color: hasCredits ? C.openai : C.muted }}>
-            créditos extras: {creditBalance != null ? creditBalance : hasCredits ? 'disponíveis' : 'nenhum'}
-          </div>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {[
-            ['Uso do Codex', 'cota, reset e créditos', 'https://chatgpt.com/codex/settings/usage'],
-            ['Assinatura ChatGPT', 'plano, cobrança e faturas', 'https://chatgpt.com/'],
-            ['Custos da API', 'consumo comercial separado', 'https://platform.openai.com/usage'],
-          ].map(([title, description, href]) => (
-            <a
-              key={title}
-              className="rounded-xl border p-3 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
-              style={{ borderColor: C.border }}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="mc-num text-[13px] font-semibold">{title}</span>
-                <span style={{ color: C.openai }}>↗</span>
-              </div>
-              <div className="mc-num mt-1 text-[11px]" style={{ color: C.muted }}>{description}</div>
-            </a>
-          ))}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-/** licenca x tokens extras (excedente): de onde estao saindo os tokens agora */
-function SourcePanel({ extra, cur }) {
-  const burning = !!extra?.burning;
-  const color = burning ? C.crit : C.good;
-  return (
-    <Card>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="mc-label" style={{ color: C.ink2 }}>
-          fonte dos tokens
-        </span>
-        <Chip color={color}>{burning ? 'tokens extras' : 'licença'}</Chip>
-      </div>
-      <div className="mc-display text-lg font-bold leading-snug">
-        {burning
-          ? 'Queimando tokens extras agora — isso é cobrado à parte.'
-          : 'Dentro da licença — nada extra sendo cobrado.'}
-      </div>
-      <div className="mc-num mt-3 grid grid-cols-3 gap-3 text-[12px]" style={{ color: C.muted }}>
-        <div>
-          <div className="mc-label">extras no mês</div>
-          <div className="text-base font-semibold" style={{ color: burning ? C.crit : C.ink2 }}>
-            {fmtMoney(extra?.used, cur)}
-          </div>
-        </div>
-        <div>
-          <div className="mc-label">últimas 24h</div>
-          <div className="text-base font-semibold" style={{ color: C.ink2 }}>
-            {extra?.spent_24h != null ? fmtMoney(extra.spent_24h, cur) : '—'}
-          </div>
-        </div>
-        <div>
-          <div className="mc-label">média / hora</div>
-          <div className="text-base font-semibold" style={{ color: C.ink2 }}>
-            {extra?.rate_per_hour != null ? `${fmtMoney(extra.rate_per_hour, cur)}/h` : '—'}
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function BurnPanel({ burn }) {
-  const rows = Object.entries(burn || {})
-    .filter(([, v]) => typeof v === 'number' && v > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
-  const max = rows.length ? rows[0][1] : 1;
-  return (
-    <Card>
-      <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-        queima por modelo · tok/h (2h)
-      </div>
-      {rows.length === 0 && (
-        <div className="mc-num text-[13px]" style={{ color: C.muted }}>
-          sem atividade recente
-        </div>
-      )}
-      <div className="space-y-2.5">
-        {rows.map(([m, v]) => (
-          <div key={m} className="flex items-center gap-3">
-            <span className="mc-num w-24 shrink-0 truncate text-[12px]" style={{ color: C.ink2 }} title={m}>
-              {modelShort(m)}
-            </span>
-            <div className="h-2 flex-1 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
-              <div
-                className="h-full rounded-full transition-[width] duration-700"
-                style={{ width: `${Math.max(2, (v / max) * 100)}%`, background: C.s2 }}
-              />
-            </div>
-            <span className="mc-num w-16 shrink-0 text-right text-[12px]" style={{ color: C.muted }}>
-              {fmtTokens(v)}/h
-            </span>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-// licencas conhecidas: tabela BRASIL de claude.com/pricing (ago/2026).
-// `brl` = cobranca mensal; `brlAnnual` = por mes no plano anual, quando existe.
-// Max 20x nao e exibido no site ("a partir de R$ 550"); R$ 1.100 segue a
-// proporcao 2x da tabela americana. Conferir quando a Anthropic reajustar.
-const PLANS = {
-  pro: { label: 'Pro', brl: 110, brlAnnual: 92 },
-  max_5x: { label: 'Max 5×', brl: 550 },
-  max_20x: { label: 'Max 20×', brl: 1100 },
-  team_standard: { label: 'Time · padrão', brl: 138, brlAnnual: 110 },
-  team_premium: { label: 'Time · premium', brl: 688, brlAnnual: 550 },
-  enterprise: { label: 'Enterprise', brl: null },
-};
-
-function planPriceHint(p) {
-  if (!p?.brl) return 'R$ 110/assento + uso cobrado a preço de API';
-  const anual = p.brlAnnual ? ` · R$ ${p.brlAnnual}/mês no anual` : '';
-  return `tabela Brasil: R$ ${p.brl}/mês${anual}`;
-}
-
-/**
- * Balanço licença vs consumo — os dados para a conta "está valendo a pena?".
- * Consumo equivalente = o que o mês custaria em API (subsidiado pela licença).
- * Desembolso real = licença mensal + créditos extras pagos à parte.
- */
-function BalancePanel({ mes, geral, extra, sub, plan, fx, onSaveSub, onSavePlan }) {
-  const [subInput, setSubInput] = useState('');
-  const effectivePlan = plan?.selected || plan?.detected || null;
-  const detectedInfo = plan?.detected ? PLANS[plan.detected] : null;
-  const planInfo = effectivePlan ? PLANS[effectivePlan] : null;
-  // sugestao: preco anual quando existe (o mais comum em contas Time), senao mensal
-  const suggested = planInfo?.brlAnnual ?? planInfo?.brl ?? null;
-  const equivalente = mes?.total_cost ?? null;
-  const extras = extra?.used ?? 0;
-  const coberto = equivalente != null ? Math.max(0, equivalente - extras) : null;
-  const desembolso = (sub || 0) + extras;
-  const leverage = equivalente != null && desembolso > 0 ? equivalente / desembolso : null;
-  const saldo = equivalente != null ? equivalente - desembolso : null;
-  const pctLic = equivalente > 0 ? (coberto / equivalente) * 100 : 0;
-
-  return (
-    <Card>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="mc-label" style={{ color: C.ink2 }}>
-          licença vs consumo · este mês
-        </span>
-        {leverage != null && (
-          <Chip color={leverage >= 1 ? C.good : C.warn}>
-            {leverage >= 1 ? 'compensando' : 'abaixo do pago'}
-          </Chip>
-        )}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
-        <div>
-          <div className="mc-num text-4xl font-bold tracking-tight">
-            {leverage != null ? `${leverage.toFixed(1).replace('.', ',')}×` : '—'}
-          </div>
-          <div className="mc-num mt-1 max-w-[36ch] text-[12px]" style={{ color: C.muted }}>
-            {equivalente != null && desembolso > 0
-              ? `consumo equivalente de ${costBRL(equivalente)} pagando ${costBRL(desembolso)}`
-              : 'defina o valor da licença para calcular'}
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          {equivalente != null && (
-            <>
-              <div className="flex h-3 w-full overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                <div className="h-full" style={{ width: `${pctLic}%`, background: C.s1 }} />
-                <div
-                  className="h-full"
-                  style={{ width: `${100 - pctLic}%`, background: C.s2, marginLeft: pctLic > 0 && pctLic < 100 ? 2 : 0 }}
-                />
-              </div>
-              <div className="mc-num mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[12px]" style={{ color: C.muted }}>
-                <span>
-                  <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: C.s1 }} />
-                  coberto pela licença <span style={{ color: C.ink2 }}>{costBRL(coberto)}</span>
-                </span>
-                <span>
-                  <span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: C.s2 }} />
-                  créditos extras <span style={{ color: C.ink2 }}>{costBRL(extras)}</span>
-                </span>
-                {saldo != null && (
-                  <span>
-                    saldo vs API{' '}
-                    <span style={{ color: saldo >= 0 ? C.good : C.crit }}>
-                      {saldo >= 0 ? '+' : '−'}{costBRL(Math.abs(saldo))}
-                    </span>
-                  </span>
-                )}
-                {geral?.total_cost != null && (
-                  <span>
-                    vida toda (equivalente) <span style={{ color: C.ink2 }}>{costBRL(geral.total_cost)}</span>
-                  </span>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* seletor de licenca */}
-      <div className="mt-3 border-t pt-3" style={{ borderColor: C.border }}>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mc-label mr-1">sua licença</span>
-          {Object.entries(PLANS).map(([id, p]) => (
-            <button
-              key={id}
-              className="mc-pill"
-              data-active={effectivePlan === id}
-              title={planPriceHint(p)}
-              onClick={() => onSavePlan(id)}
-            >
-              {p.label}
-              {plan?.detected === id ? ' ✓' : ''}
-            </button>
-          ))}
-        </div>
-        {detectedInfo && (
-          <div className="mc-num mt-1.5 text-[11px]" style={{ color: C.muted }}>
-            identificado pela conexão com a sua conta{plan?.org_name ? ` (${plan.org_name})` : ''}:{' '}
-            <span style={{ color: C.ink2 }}>{detectedInfo.label}</span>
-            {plan?.rate_limit_tier ? ` · limites ${plan.rate_limit_tier.replace(/^default_/, '').replace(/_/g, ' ')}` : ''}
-            {' — clique acima para alternar'}
-            {plan?.selected && plan.selected !== plan.detected ? ' (você escolheu outra manualmente)' : ''}
-          </div>
-        )}
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3" style={{ borderColor: C.border }}>
-        <div>
-          <div className="mc-label">licença mensal (R$)</div>
-          <input
-            className="mc-input"
-            placeholder={sub != null ? String(sub) : 'ex.: 550'}
-            value={subInput}
-            onChange={(e) => setSubInput(e.target.value)}
-          />
-        </div>
-        <button
-          className="mc-btn"
-          onClick={() => {
-            const v = parseFloat(subInput.replace(',', '.'));
-            if (!Number.isNaN(v) && v >= 0) onSaveSub(v);
-            setSubInput('');
-          }}
-        >
-          salvar
-        </button>
-        {suggested != null && (
-          <button
-            className="mc-btn"
-            title={`tabela Brasil (${planInfo?.brlAnnual ? 'plano anual' : 'mensal'}) — mensal: R$ ${planInfo?.brl}`}
-            onClick={() => onSaveSub(suggested)}
-          >
-            usar tabela ({fmtMoney(suggested, 'BRL')})
-          </button>
-        )}
-        <span className="mc-num text-[11px]" style={{ color: C.muted }}>
-          equivalente = preço de tabela da API; extras = cobrados à parte no mês
-        </span>
-      </div>
-    </Card>
-  );
-}
-
-function CombinedScopeTile({ label, claude, chatgpt, fx }) {
-  return (
-    <Card>
-      <div className="mc-label mb-2">{label}</div>
-      <div className="space-y-2">
-        <div>
-          <div className="mc-num text-[11px]" style={{ color: C.s1 }}>● CLAUDE</div>
-          <div className="mc-num text-xl font-bold">{fmtTokens(claude?.total_tokens)}</div>
-          <div className="mc-num text-[11px]" style={{ color: C.muted }}>{costBRL(claude?.total_cost, fx)} equivalente</div>
-        </div>
-        <div className="border-t pt-2" style={{ borderColor: C.border }}>
-          <div className="mc-num text-[11px]" style={{ color: C.openai }}>● CHATGPT</div>
-          <div className="mc-num text-xl font-bold">{fmtTokens(chatgpt?.total_tokens)}</div>
-          <div className="mc-num text-[11px]" style={{ color: C.muted }}>{fmtInt(chatgpt?.calls)} chamadas Codex</div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function ModelMix({ byModel, fx }) {
-  const rows = (byModel || []).slice(0, 6);
-  const total = rows.reduce((a, r) => a + r.tokens, 0) || 1;
-  return (
-    <Card className="h-full">
-      <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-        mix de modelos · este mês
-      </div>
-      <div className="space-y-2.5">
-        {rows.map((r) => {
-          const share = (r.tokens / total) * 100;
-          return (
-            <div key={r.model} className="flex items-center gap-3">
-              <span className="mc-num w-24 shrink-0 truncate text-[12px]" style={{ color: C.ink2 }} title={r.model}>
-                {modelShort(r.model)}
-              </span>
-              <div className="h-2 flex-1 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                <div className="h-full rounded-full" style={{ width: `${Math.max(1.5, share)}%`, background: C.s1 }} />
-              </div>
-              <span className="mc-num w-24 shrink-0 text-right text-[12px]" style={{ color: C.muted }}>
-                {share.toFixed(0)}% · {costBRL(r.cost, fx)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
-// opcoes dark dos graficos chart.js
-const chartBase = {
+const options = {
   responsive: true,
   maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
   plugins: {
-    legend: { labels: { color: C.ink2, boxWidth: 12, boxHeight: 12, font: { size: 11 } } },
-    tooltip: { backgroundColor: '#0e1750', titleColor: C.ink, bodyColor: C.ink2, borderColor: C.border, borderWidth: 1 },
+    legend: {
+      labels: {
+        color: '#c0c8d5',
+        usePointStyle: true
+      }
+    }
   },
   scales: {
-    x: { ticks: { color: C.muted, font: { size: 10 } }, grid: { color: 'transparent' }, border: { color: C.grid } },
-    y: { ticks: { color: C.muted, font: { size: 10 } }, grid: { color: C.grid }, border: { display: false } },
-  },
+    x: {
+      ticks: {
+        color: '#8592a5',
+        maxTicksLimit: 12
+      },
+      grid: {
+        display: false
+      }
+    },
+    y: {
+      ticks: {
+        color: '#8592a5',
+        callback: fmtTokens
+      },
+      grid: {
+        color: '#ffffff0a'
+      }
+    }
+  }
 };
-
-function DailyChart({ daily, chatgpt }) {
-  const labels = [...new Set([...(daily || []).map((d) => d.day), ...(chatgpt || []).map((d) => d.day)])].sort();
-  const claudeMap = Object.fromEntries((daily || []).map((d) => [d.day, d.tokens]));
-  const chatgptMap = Object.fromEntries((chatgpt || []).map((d) => [d.day, d.tokens]));
-  return (
-    <div className="h-52 2xl:h-60">
-      <Bar
-        data={{
-          labels: labels.map((day) => day.slice(5)),
-          datasets: [
-            {
-              label: 'Claude',
-              data: labels.map((day) => claudeMap[day] || 0),
-              backgroundColor: `${C.s1}99`,
-              borderRadius: 4,
-              maxBarThickness: 28,
-            },
-            {
-              label: 'ChatGPT',
-              data: labels.map((day) => chatgptMap[day] || 0),
-              backgroundColor: `${C.openai}dd`,
-              borderRadius: 4,
-              maxBarThickness: 14,
-            },
-          ],
-        }}
-        options={{
-          ...chartBase,
-          plugins: { ...chartBase.plugins },
-          datasets: { bar: { grouped: false } },
-          scales: {
-            ...chartBase.scales,
-            y: { ...chartBase.scales.y, ticks: { ...chartBase.scales.y.ticks, callback: (v) => fmtTokens(v) } },
-          },
-        }}
-      />
-    </div>
-  );
+function Settings({
+  state,
+  onSave
+}) {
+  const [message, setMessage] = useState('');
+  return <details className="u-settings"><summary>Assinaturas, conexões e metodologia</summary><form onSubmit={async e => {
+      e.preventDefault();
+      const data = new FormData(e.currentTarget);
+      const values = {};
+      for (const key of ['subscription_brl', 'chatgpt_subscription_brl', 'chatgpt_extra_brl']) {
+        const text = data.get(key).trim();
+        if (!text) continue;
+        const value = Number(text.replace(',', '.'));
+        if (!Number.isFinite(value) || value < 0) {
+          setMessage('Use valores positivos ou zero.');
+          return;
+        }
+        values[key] = value;
+      }
+      try {
+        await onSave(values);
+        setMessage('Valores salvos.');
+      } catch {
+        setMessage('Não foi possível salvar. Tente novamente.');
+      }
+    }}><div className="u-settings-grid">{[['subscription_brl', 'Claude · mensalidade'], ['chatgpt_subscription_brl', 'ChatGPT · mensalidade'], ['chatgpt_extra_brl', 'ChatGPT · extras pagos neste mês']].map(([key, label]) => <label key={key}>{label}<input name={key} inputMode="decimal" defaultValue={state.config[key] ?? ''} placeholder="R$ · informe o valor" /></label>)}<button>Salvar valores</button></div><p role="status">{message}</p></form><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a><button onClick={() => api.authStart()}>Reconectar Claude</button></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></details>;
 }
-
-function SnapChart({ snapshots }) {
-  const ts = [...new Set((snapshots || []).map((s) => s.ts))].sort();
-  const datasets = Object.keys(WIN_COLORS)
-    .map((w) => {
-      const mm = {};
-      (snapshots || []).filter((s) => s.window === w).forEach((s) => (mm[s.ts] = s.utilization));
-      if (!Object.keys(mm).length) return null;
-      return {
-        label: WIN_SHORT[w],
-        data: ts.map((t) => (t in mm ? mm[t] : null)),
-        borderColor: WIN_COLORS[w],
-        backgroundColor: WIN_COLORS[w],
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        spanGaps: true,
-        tension: 0.3,
-      };
-    })
-    .filter(Boolean);
-  return (
-    <div className="h-52 2xl:h-60">
-      <Line
-        data={{
-          labels: ts.map((t) => new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })),
-          datasets,
-        }}
-        options={{
-          ...chartBase,
-          scales: {
-            ...chartBase.scales,
-            y: {
-              ...chartBase.scales.y,
-              min: 0,
-              suggestedMax: 100,
-              ticks: { ...chartBase.scales.y.ticks, callback: (v) => `${v}%` },
-            },
-          },
-        }}
-      />
-    </div>
-  );
-}
-
-function FooterStrip({ state, generatedAt, now }) {
-  const cur = state?.config?.currency || 'BRL';
-  const fx = state?.config?.usd_brl || null;
-  const extra = state?.extra_usage;
-  return (
-    <Card className="flex flex-wrap items-center gap-x-8 gap-y-3">
-      {extra && (
-        <div>
-          <div className="mc-label">excedente (créditos)</div>
-          <div className="mc-num text-lg font-semibold">{fmtMoney(extra.used, cur)}</div>
-        </div>
-      )}
-      {fx && (
-        <div>
-          <div className="mc-label">câmbio</div>
-          <div className="mc-num text-lg font-semibold">
-            R$ {fx.toFixed(2)}
-            <span className="text-[12px] font-normal" style={{ color: C.muted }}>
-              {' '}/ US$
-            </span>
-          </div>
-        </div>
-      )}
-      <div>
-        <div className="mc-label">limites ao vivo</div>
-        <div className="mc-num text-[13px]" style={{ color: C.ink2 }}>
-          a cada {state?.config?.refresh_seconds ?? 300}s
-          <span className="text-[11px]" style={{ color: C.muted }}> · acelera perto do limite</span>
-        </div>
-      </div>
-      <div className="mc-num ml-auto text-right text-[11px]" style={{ color: C.muted }}>
-        estado gerado há {ago(generatedAt, now)} · roda em localhost · uso pessoal
-      </div>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------- página
-
 export default function Dashboard() {
-  const [state, setState] = useState(null);
-  const [total, setTotal] = useState(null);
-  const [history, setHistory] = useState(null);
-  const [latency, setLatency] = useState(null);
-  const [aviso, setAviso] = useState(null);
-  const now = useNow(1000);
-
-  const loadState = useCallback(async () => {
-    try {
-      const t0 = performance.now();
-      const s = await api.state();
-      setLatency(performance.now() - t0);
-      setState(s);
-    } catch {
-      setLatency(null);
-    }
-  }, []);
-  const loadTotal = useCallback(async () => {
-    try {
-      setTotal(await api.total());
-    } catch {
-      /* mantém o último */
-    }
-  }, []);
-  const loadHistory = useCallback(async () => {
-    try {
-      setHistory(await api.history());
-    } catch {
-      /* mantém o último */
-    }
-  }, []);
-
+  const [state, setState] = useState(null),
+    [history, setHistory] = useState(null);
+  const [now, setNow] = useState(() => Date.now()),
+    [error, setError] = useState('');
+  const [scope, setScope] = useState('mes'),
+    [provider, setProvider] = useState('both'),
+    [busy, setBusy] = useState(false);
   useEffect(() => {
-    loadState();
-    loadTotal();
-    loadHistory();
-    const a = setInterval(loadTotal, 3000);
-    const b = setInterval(loadState, 10000);
-    const c = setInterval(loadHistory, 60000);
+    let alive = true;
+    async function load() {
+      try {
+        const s = await api.state();
+        if (alive) {
+          setState(s);
+          setError('');
+        }
+      } catch {
+        if (alive) setError('Conexão interrompida · exibindo último estado');
+      }
+    }
+    async function hist() {
+      try {
+        const h = await api.history();
+        if (alive) setHistory(h);
+      } catch {/* preserve */}
+    }
+    void load();
+    void hist();
+    const a = setInterval(load, 10000),
+      b = setInterval(hist, 60000),
+      c = setInterval(() => setNow(Date.now()), 1000);
     return () => {
+      alive = false;
       clearInterval(a);
       clearInterval(b);
       clearInterval(c);
     };
-  }, [loadState, loadTotal, loadHistory]);
-
-  const refreshNow = async () => {
+  }, []);
+  async function refresh() {
+    setBusy(true);
     try {
       const r = await api.refresh();
-      if (r && r.ok === false) {
-        // o backend recusou para nao furar o rate limit da conta
-        setAviso(
-          r.reason === 'rate_limited'
-            ? `limite da conta — nova tentativa em ${r.retry_in}s`
-            : `aguarde ${r.retry_in}s para atualizar de novo`,
-        );
-        setTimeout(() => setAviso(null), 5000);
-      }
+      setState(await api.state());
+      setHistory(await api.history());
+      setError(r?.ok === false ? `Próxima consulta em ${r.retry_in}s` : '');
     } catch {
-      /* mantem o ultimo estado */
+      setError('Falha ao atualizar; último estado preservado.');
+    } finally {
+      setBusy(false);
     }
-    loadState();
-    loadTotal();
-    loadHistory();
-  };
-  const setHours = async (h) => {
-    await api.setConfig({ intended_hours: h });
-    loadState();
-  };
-
-  const windows = state?.windows || {};
-  const fx = state?.config?.usd_brl || null;
-  const winKeys = ['five_hour', 'seven_day', 'seven_day_sonnet'].filter((k) => windows[k]);
-  const burnMap = state?.burn_tokph || {};
-  // queima total (todos os modelos, Claude Code + Science) e quebra por origem
-  const totalBurn = Object.values(burnMap).reduce((a, b) => a + b, 0) || null;
-  const burnModels = Object.values(burnMap).filter((v) => v > 0).length;
-  const burnBySource = { code: 0, science: 0 };
-  Object.values(state?.burn_by_source || {}).forEach((d) => {
-    Object.entries(d).forEach(([s, v]) => {
-      burnBySource[s] = (burnBySource[s] || 0) + v;
-    });
-  });
-  const heatmap = history?.heatmap || [];
-
-  return (
-    <div className="mc-root min-h-screen" style={{ background: C.page, color: C.ink }}>
-      <StatusBar
-        state={state}
-        latency={latency}
-        now={now}
-        aviso={aviso}
-        onRefresh={refreshNow}
-        onReconnect={() => api.authStart()}
-      />
-
-      <main className="mx-auto w-full max-w-[2400px] space-y-4 px-4 pb-12 pt-4 sm:px-6 xl:px-8">
-        <div className="mc-label" style={{ color: C.s1 }}>CLAUDE · ANTHROPIC</div>
-        {/* decisão + contador vivo */}
-        <section className="grid gap-4 xl:grid-cols-12">
-          <div className="xl:col-span-7 2xl:col-span-8">
-            <VerdictPanel
-              sw={state?.switch}
-              intendedHours={state?.config?.intended_hours}
-              dominant={state?.dominant_model}
-              onChangeHours={setHours}
-            />
-          </div>
-          <div className="xl:col-span-5 2xl:col-span-4">
-            <LiveTotal
-              total={total}
-              today={state?.history?.dia}
-              burn={totalBurn}
-              burnBySource={burnBySource}
-              burnModels={burnModels}
-              dominant={state?.dominant_model}
-              fx={fx}
-            />
-          </div>
-        </section>
-
-        {/* janelas ao vivo + queima */}
-        <section className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(290px,1fr))]">
-          {winKeys.map((k) => (
-            <WindowCard key={k} k={k} w={windows[k]} now={now} snapshotTs={state?.snapshot_ts} />
-          ))}
-          <SourcePanel extra={state?.extra_usage} cur={state?.config?.currency || 'BRL'} />
-          <BurnPanel burn={burnMap} />
-        </section>
-
-        <ChatGPTPanel
-          chatgpt={state?.chatgpt}
-          now={now}
-          subscription={state?.config?.chatgpt_subscription_brl}
-          onSaveSubscription={(value) => api.setConfig({ chatgpt_subscription_brl: value }).then(loadState)}
-        />
-
-        {/* licença vs consumo */}
-        <BalancePanel
-          mes={state?.history?.mes}
-          geral={state?.history?.geral}
-          extra={state?.extra_usage}
-          sub={state?.config?.subscription_brl}
-          plan={state?.plan}
-          fx={fx}
-          onSaveSub={(v) => api.setConfig({ subscription_brl: v }).then(loadState)}
-          onSavePlan={(id) => api.setConfig({ plan: id }).then(loadState)}
-        />
-
-        {/* escopos históricos */}
-        <section className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
-          <CombinedScopeTile label="hoje" claude={state?.history?.dia} chatgpt={state?.chatgpt?.history?.dia} fx={fx} />
-          <CombinedScopeTile label="esta semana" claude={state?.history?.semana} chatgpt={state?.chatgpt?.history?.semana} fx={fx} />
-          <CombinedScopeTile label="este mês" claude={state?.history?.mes} chatgpt={state?.chatgpt?.history?.mes} fx={fx} />
-          <CombinedScopeTile label="vida toda" claude={state?.history?.geral} chatgpt={state?.chatgpt?.history?.geral} fx={fx} />
-        </section>
-
-        {/* gráficos */}
-        <section className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-          <Card>
-            <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-              tokens por dia · Claude × ChatGPT · 30d
-            </div>
-            <DailyChart daily={history?.daily} chatgpt={state?.chatgpt?.daily} />
-          </Card>
-          <Card>
-            <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-              utilização das janelas · 48 snapshots
-            </div>
-            <SnapChart snapshots={history?.snapshots} />
-          </Card>
-          <div className="xl:col-span-2 2xl:col-span-1">
-            <ModelMix byModel={state?.history?.mes?.by_model} fx={fx} />
-          </div>
-        </section>
-
-        {/* ritmo de uso */}
-        {heatmap.length > 0 && (
-          <Card>
-            <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-              ritmo de uso · Claude × ChatGPT · média por hora
-            </div>
-            <HeatmapChart heatmap={heatmap} chatgpt={state?.chatgpt?.heatmap} />
-          </Card>
-        )}
-
-        <FooterStrip state={state} generatedAt={state?.generated_at} now={now} />
-      </main>
+  }
+  async function save(values) {
+    await api.setConfig(values);
+    setState(await api.state());
+  }
+  if (!state) return <main className="u-root"><div className="u-wrap"><h1>Seu consumo de IA</h1><p role="status">{error || 'Carregando um retrato completo das duas plataformas…'}</p></div></main>;
+  const cg = state.chatgpt || {},
+    fx = state.config.usd_brl;
+  const ca = state.history?.[scope] || {},
+    oa = cg.history?.[scope] || {};
+  const allA = state.history?.geral?.total_tokens || 0,
+    allB = cg.history?.geral?.total_tokens || 0;
+  const burn = [...Object.entries(state.burn_tokph || {}).map(([model, value]) => ({
+    model,
+    value,
+    color: ORANGE,
+    provider: 'Claude'
+  })), ...Object.entries(cg.burn_by_model || {}).map(([model, value]) => ({
+    model,
+    value,
+    color: GREEN,
+    provider: 'ChatGPT'
+  }))].sort((a, b) => b.value - a.value);
+  const burnA = burn.filter(r => r.provider === 'Claude').reduce((a, r) => a + r.value, 0),
+    burnB = cg.burn_tokph || 0;
+  const limits = (cg.limits || []).flatMap(l => ['primary', 'secondary'].filter(k => l[k]).map(k => ({
+    key: `${l.id}-${k}`,
+    label: `${l.name || l.id} · ${l[k].window_minutes === 10080 ? '7 dias' : `${l[k].window_minutes / 60} horas`}`,
+    value: l[k].used_percent,
+    reset: l[k].resets_at,
+    ts: l.snapshot_ts
+  })));
+  const rows = (cg.limit_history || []).flatMap(s => s.limits.flatMap(l => ['primary', 'secondary'].filter(k => l[k]).map(k => ({
+    key: `${l.id}-${k}`,
+    ts: s.ts,
+    value: l[k].used_percent,
+    reset: l[k].resets_at
+  }))));
+  const weekly = limits.find(l => l.key.startsWith('codex-') && l.label.includes('7 dias'));
+  const trend = weekly && quotaTrend(rows, weekly.key, weekly, now);
+  const credit = cg.limits?.find(l => l.credits)?.credits;
+  const openaiExtra = state.config.chatgpt_extra_brl;
+  const modelRows = [...(ca.by_model || []).map(m => ({
+    model: m.model,
+    tokens: m.tokens,
+    color: ORANGE,
+    cost: m.cost,
+    provider: 'Claude'
+  })), ...(oa.by_model || []).map(m => ({
+    ...m,
+    color: GREEN,
+    cost: m.unpriced_tokens || !fx ? null : m.equivalent_usd * fx,
+    provider: 'ChatGPT'
+  }))].sort((a, b) => b.tokens - a.tokens);
+  const daily = history?.daily || [],
+    od = cg.daily || [];
+  const dates = [...new Set([...daily, ...od].map(d => d.day))].filter(d => new Date(d + 'T12:00:00').getTime() >= now - 30 * 86400000).sort().slice(-30);
+  const showA = provider !== 'chatgpt',
+    showB = provider !== 'claude';
+  const monthA = state.history?.mes?.total_cost,
+    monthB = fx && cg.history?.mes ? cg.history.mes.equivalent_usd * fx : null;
+  const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
+  const extrasA = state.extra_usage?.used;
+  const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
+  return <div className="u-root"><main className="u-wrap">
+    <header className="u-top"><div><span className="u-eyebrow">AI USAGE / VISÃO UNIFICADA</span><h1>Seu consumo de IA<span>.</span></h1><p>Claude e ChatGPT, no mesmo ritmo.</p></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
+    <div className="u-grid u-overview">
+      <Panel title="Tokens processados" note="Registros locais · histórico completo" className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
+      <Panel title="Investimento mensal" note="Assinaturas informadas"><div className="u-medium">{money(fixed)}</div><p>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</p><p className="u-hint">Extras são contabilizados separadamente.</p></Panel>
+      <Panel title="Valor equivalente neste mês" note="Estimativa de tokens em API"><div className="u-medium">{money(monthA != null && monthB != null ? monthA + monthB : null)}</div><p>{paid && monthB != null ? `${((monthA + monthB) / paid).toFixed(2)}× do custo total informado` : 'Informe os extras para comparar o custo total.'}</p><p className="u-hint">{cg.history?.mes?.unpriced_tokens ? 'Parcial: há modelos sem preço mapeado e/ou extras não informados.' : 'Tarifas padrão; não representa cobrança.'}</p></Panel>
     </div>
-  );
+    <div className="u-advice"><span>LEITURA DO MOMENTO</span><p>{weekly ? `Codex: ${pct(weekly.value)} da cota semanal. ` : 'Cota Codex indisponível. '}{trend ? trend.projected >= 100 ? 'O ritmo observado pode esgotar a cota antes do reset; distribua o trabalho entre as plataformas.' : `Projeção de ${pct(trend.projected)} no reset; há margem no ritmo observado.` : 'A projeção ficará disponível após pelo menos 30 minutos de snapshots da mesma janela.'}</p></div>
+    <div className="u-grid u-two">
+      <Panel title="Claude" note="Limites da assinatura · oficial"><div className="u-quota-grid">{Object.entries(state.windows || {}).map(([k, w]) => <Quota key={k} label={names[k] || k} value={w.utilization} reset={w.resets_at} ts={state.snapshot_ts} color={ORANGE} now={now} trend={w.projected != null && w.rate != null && now - new Date(state.snapshot_ts) < 900000 ? {
+              projected: w.projected,
+              rate: w.rate
+            } : null} />)}</div><details><summary>Orientação de modelo Claude</summary><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={state.config.intended_hours === h} onClick={() => save({
+                intended_hours: h
+              })}>+{h}h</button>)}</div><p>{state.switch?.message || state.switch?.reason || 'Consulte as cotas acima ao escolher o próximo modelo.'}</p></details></Panel>
+      <Panel title="ChatGPT / Codex" note={cg.limits_error ? 'Falha na consulta · último snapshot' : 'Limites da assinatura · oficial'}><div className="u-quota-grid">{limits.map(l => <Quota key={l.key} {...l} color={GREEN} now={now} trend={quotaTrend(rows, l.key, l, now)} />)}</div><p className="u-hint">Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`} · consultas a cada 5 minutos. Chat comum, imagens e voz não incluídos.</p></Panel>
+    </div>
+    <div className="u-grid u-two"><Panel title="Ritmo por modelo" note="Tokens/h · média das últimas 2 horas"><div className="u-medium">{fmtTokens(burnA + burnB)}<small> / hora</small></div><Split a={burnA} b={burnB} /><div className="u-models">{burn.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span><i style={{
+                    color: r.color
+                  }}>●</i> {r.model} <small>{r.provider}</small></span><strong>{fmtTokens(r.value)}/h</strong></div><Meter value={r.value / Math.max(1, ...burn.map(b => b.value)) * 100} color={r.color} /></div>)}</div></Panel>
+      <Panel title="Retorno das assinaturas" note="Mês atual · equivalência de API"><div className="u-finance-grid"><Finance label="Claude" color={ORANGE} summary={state.history?.mes} fixed={state.config.subscription_brl} extra={extrasA} fx={fx} now={now} /><Finance label="ChatGPT" color={GREEN} summary={cg.history?.mes} fixed={state.config.chatgpt_subscription_brl} extra={openaiExtra} fx={fx} now={now} openai /></div></Panel></div>
+    <Panel title="Comparativo de consumo" note="Semana começa na segunda; cotas usam suas próprias janelas"><div className="u-tabs">{scopes.map(([id, label]) => <button key={id} aria-pressed={scope === id} onClick={() => setScope(id)}>{label}</button>)}</div><div className="u-table-wrap"><table><thead><tr><th>Plataforma</th><th>Tokens</th><th>Participação</th><th>Interações</th><th>Equivalente de API</th></tr></thead><tbody>{[['Claude', ca, ORANGE], ['ChatGPT / Codex', oa, GREEN]].map(([label, data, color], i) => <tr key={label}><td style={{
+                  color
+                }}>● {label}</td><td>{fmtTokens(data.total_tokens)}</td><td>{pct(ca.total_tokens + oa.total_tokens ? data.total_tokens / (ca.total_tokens + oa.total_tokens) * 100 : 0)}</td><td>{fmtInt(data.calls ?? data.total_turns)}</td><td>{money(i ? fx ? data.equivalent_usd * fx : null : data.total_cost)}{i && data.unpriced_tokens > 0 ? ' · parcial' : ''}</td></tr>)}</tbody></table></div><div className="u-models">{modelRows.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span style={{
+                color: r.color
+              }}>● {r.model}</span><small>{fmtTokens(r.tokens)} · {money(r.cost)} {r.cost == null ? 'sem preço mapeado' : 'equivalente'}</small></div><Meter value={r.tokens / Math.max(1, ...modelRows.map(m => m.tokens)) * 100} color={r.color} /></div>)}</div><details><summary>Composição dos tokens do Codex</summary><p>Entrada sem cache: {fmtTokens((oa.input_tokens || 0) - (oa.cached_input_tokens || 0))} · cache lido: {fmtTokens(oa.cached_input_tokens)} · saída: {fmtTokens(oa.output_tokens)} · raciocínio dentro da saída: {fmtTokens(oa.reasoning_output_tokens)}.</p></details></Panel>
+    <div className="u-heading u-section-title"><h2>Quando você usa cada plataforma</h2><div className="u-tabs">{[['both', 'Ambas'], ['claude', 'Claude'], ['chatgpt', 'ChatGPT']].map(([id, label]) => <button key={id} aria-pressed={provider === id} onClick={() => setProvider(id)}>{label}</button>)}</div></div>
+    <div className="u-grid u-two"><Panel title="Tokens por dia" note="Últimos 30 dias"><div className="u-chart"><Bar options={options} data={{
+              labels: dates.map(d => d.slice(5)),
+              datasets: [...(showA ? [{
+                label: 'Claude',
+                data: dates.map(d => daily.find(r => r.day === d)?.tokens || 0),
+                backgroundColor: ORANGE,
+                borderRadius: 3
+              }] : []), ...(showB ? [{
+                label: 'ChatGPT',
+                data: dates.map(d => od.find(r => r.day === d)?.tokens || 0),
+                backgroundColor: GREEN,
+                borderRadius: 3
+              }] : [])]
+            }} /></div></Panel><Panel title="Ritmo por dia e hora" note="Média por hora ativa · histórico local"><HeatmapChart fx={fx} heatmap={showA ? history?.heatmap : []} chatgpt={showB ? cg.heatmap : []} /><p className="u-hint">As duas cores usam a mesma escala de tokens. Passe o mouse para comparar os volumes.</p></Panel></div>
+    <Panel title="Evolução das cotas" note="Últimas 48 horas · percentuais oficiais"><div className="u-chart"><Line options={{
+            ...options,
+            scales: {
+              ...options.scales,
+              x: {
+                ...options.scales.x,
+                type: 'linear',
+                ticks: {
+                  color: '#8592a5',
+                  maxTicksLimit: 8,
+                  callback: v => new Date(v).toLocaleString('pt-BR', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })
+                }
+              },
+              y: {
+                ...options.scales.y,
+                ticks: {
+                  color: '#8592a5',
+                  callback: v => `${v}%`
+                },
+                suggestedMin: 0,
+                suggestedMax: 100
+              }
+            }
+          }} data={{
+            datasets: [...(showA ? Object.keys(state.windows || {}).map((key, index) => ({
+              label: `Claude · ${names[key] || key}`,
+              data: (history?.snapshots || []).filter(r => r.window === key).map(r => ({
+                x: new Date(r.ts).getTime(),
+                y: r.utilization
+              })),
+              borderColor: ORANGE,
+              borderDash: index ? [5, 4] : [],
+              pointRadius: 0
+            })) : []), ...(showB ? limits.map((l, index) => ({
+              label: l.label,
+              data: rows.filter(r => r.key === l.key).map(r => ({
+                x: new Date(r.ts).getTime(),
+                y: r.value
+              })),
+              borderColor: GREEN,
+              borderDash: index ? [5, 4] : [],
+              pointRadius: 2
+            })) : [])]
+          }} /></div></Panel>
+    <Settings state={state} onSave={save} /><footer className="u-footer">Dados locais · {cg.ignored_imported_sessions || 0} sessões importadas separadas · câmbio {money(fx)}/US$ · cotas oficiais, valores de API estimados</footer>
+  </main></div>;
 }

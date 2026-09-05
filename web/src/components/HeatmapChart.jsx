@@ -12,7 +12,7 @@ function fmtTokens(v) {
   return String(Math.round(v));
 }
 
-export default function HeatmapChart({ heatmap = [], chatgpt = [] }) {
+export default function HeatmapChart({ heatmap = [], chatgpt = [], fx }) {
   const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
 
@@ -39,6 +39,8 @@ export default function HeatmapChart({ heatmap = [], chatgpt = [] }) {
     const tRect = e.currentTarget.getBoundingClientRect();
     setTooltip({
       dow, hour, claude, openai,
+      ca: heatmap.find(r => r.dow === dow && r.hour === hour),
+      oa: chatgpt.find(r => r.dow === dow && r.hour === hour),
       x: tRect.left - cRect.left + tRect.width / 2,
       y: tRect.top - cRect.top,
     });
@@ -58,17 +60,20 @@ export default function HeatmapChart({ heatmap = [], chatgpt = [] }) {
             left: tooltip.x,
             top: tooltip.y > 80 ? tooltip.y - 68 : tooltip.y + 26,
             transform: 'translateX(-50%)',
+            maxWidth: 'min(460px,90vw)',
           }}
         >
-          <div className="bg-gray-950 dark:bg-white text-white dark:text-gray-950 text-xs rounded-xl px-3 py-2 shadow-2xl whitespace-nowrap">
+          <div className="bg-gray-950 dark:bg-white text-white dark:text-gray-950 text-xs rounded-xl px-3 py-2 shadow-2xl">
             <div className="font-semibold tracking-tight">
               {DAYS[tooltip.dow]}, {tooltip.hour}h–{tooltip.hour + 1}h
             </div>
             <div className="mt-0.5 opacity-60 font-mono tabular-nums">
-              <span style={{ color: '#4285ee' }}>Claude {fmtTokens(tooltip.claude)}</span>
+              <span style={{ color: '#ef985d' }}>Claude {fmtTokens(tooltip.claude)}</span>
               {' · '}
-              <span style={{ color: '#10a37f' }}>ChatGPT {fmtTokens(tooltip.openai)}</span>
+              <span style={{ color: '#45d6aa' }}>ChatGPT {fmtTokens(tooltip.openai)}</span>
             </div>
+            <div className="mt-1 text-[10px]">{[...(tooltip.ca?.models || []), ...(tooltip.oa?.models || [])].join(' · ') || 'sem atividade'}</div>
+            <div className="text-[10px]">Equivalente médio: Claude {tooltip.ca?.avg_cost?.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) || '—'} · ChatGPT {fx && tooltip.oa ? (tooltip.oa.avg_cost_usd * fx).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) : '—'}{tooltip.oa?.partial ? ' (parcial)' : ''}</div>
           </div>
         </div>
       )}
@@ -96,17 +101,19 @@ export default function HeatmapChart({ heatmap = [], chatgpt = [] }) {
             {HOURS.map(h => {
               const claude = matrix.claude[dow]?.[h] || 0;
               const openai = matrix.chatgpt[dow]?.[h] || 0;
-              const cn = peaks.claude > 0 ? claude / peaks.claude : 0;
-              const on = peaks.chatgpt > 0 ? openai / peaks.chatgpt : 0;
+              const cn = peaks.claude > 0 ? claude / Math.max(peaks.claude, peaks.chatgpt) : 0;
+              const on = peaks.chatgpt > 0 ? openai / Math.max(peaks.claude, peaks.chatgpt) : 0;
               const ca = claude ? 0.14 + cn * 0.86 : 0.04;
               const oa = openai ? 0.14 + on * 0.86 : 0.04;
               return (
                 <div
                   key={h}
+                  title={`${DAYS[dow]} ${h}h · Claude ${fmtTokens(claude)} · ChatGPT ${fmtTokens(openai)} tokens`}
+                  aria-label={`${DAYS[dow]} ${h}h: Claude ${fmtTokens(claude)}, ChatGPT ${fmtTokens(openai)} tokens`}
                   className="flex-1 rounded-[3px] cursor-default transition-transform duration-75 hover:scale-125 hover:z-10 relative"
                   style={{
                     aspectRatio: '1',
-                    background: `linear-gradient(135deg, rgba(66,133,238,${ca}) 0 50%, rgba(16,163,127,${oa}) 50% 100%)`,
+                    background: `linear-gradient(135deg, rgba(239,152,93,${ca}) 0 50%, rgba(69,214,170,${oa}) 50% 100%)`,
                   }}
                   onMouseEnter={(e) => handleEnter(e, dow, h, claude, openai)}
                 />
@@ -117,11 +124,11 @@ export default function HeatmapChart({ heatmap = [], chatgpt = [] }) {
           <div className="w-14 shrink-0 flex items-center pl-2">
             <div className="w-full h-1.5 rounded-full bg-black/5 dark:bg-white/8 overflow-hidden flex">
               <div
-                className="h-full bg-[#4285ee]"
+                className="h-full bg-[#ef985d]"
                 style={{ width: `${((dayTotals.claude[dow] || 0) / maxDayTotal) * 50}%` }}
               />
               <div
-                className="h-full bg-[#10a37f]"
+                className="h-full bg-[#45d6aa]"
                 style={{ width: `${((dayTotals.chatgpt[dow] || 0) / maxDayTotal) * 50}%` }}
               />
             </div>
@@ -130,9 +137,9 @@ export default function HeatmapChart({ heatmap = [], chatgpt = [] }) {
       ))}
 
       <div className="flex items-center justify-end gap-4 mt-3 text-[10px] tracking-tight">
-        <span style={{ color: '#4285ee' }}>● Claude</span>
-        <span style={{ color: '#10a37f' }}>● ChatGPT</span>
-        <span className="text-black/25 dark:text-white/25">cada plataforma normalizada pelo próprio pico</span>
+        <span style={{ color: '#ef985d' }}>● Claude</span>
+        <span style={{ color: '#45d6aa' }}>● ChatGPT</span>
+        <span className="text-black/25 dark:text-white/25">escala comum de tokens</span>
       </div>
     </div>
   );

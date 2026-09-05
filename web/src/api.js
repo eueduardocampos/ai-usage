@@ -13,7 +13,7 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
-    }).then((r) => r.json()),
+    }).then((r) => { if (!r.ok) throw new Error('Falha ao salvar'); return r.json(); }),
   refresh: () => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()),
   authStart: () => fetch('/auth/start'),
   setSemrush: (balance) =>

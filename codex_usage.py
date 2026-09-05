@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import threading
+import sqlite3
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +24,30 @@ IMPORTS_PATH = os.path.join(HOME, ".codex", "external_agent_session_imports.json
 AUTH_PATH = os.path.join(HOME, ".codex", "auth.json")
 USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 LIMIT_REFRESH_SECONDS = 300
+# Standard text API equivalence, verified 2026-09-05. No tool fees or Fast premium.
+API_PRICES = {
+    "gpt-6-astra": (10, 1, 50),
+    "gpt-5.5": (5, .5, 30),
+    "gpt-5.6-sol": (4, .4, 20),
+    "gpt-5.6-terra": (2, .2, 12),
+    "gpt-5.6-luna": (.2, .02, 1.2),
+}
+
+
+def equivalent_usd(event):
+    prices = API_PRICES.get(event["model"])
+    if prices is None:
+        return None
+    i, cache, o = prices
+    if event["input_tokens"] > 272000:
+        i *= 2
+        cache *= 2
+        o *= 1.5
+    cached = min(event["input_tokens"], event["cached_input_tokens"])
+    # Reasoning is already included in output_tokens.
+    return ((event["input_tokens"] - cached) * i + cached * cache
+            + event["output_tokens"] * o) / 1e6
+
 
 
 def _parse_iso(value):
@@ -42,7 +67,7 @@ def _reset_iso(epoch):
 
 
 class CodexUsage:
-    def __init__(self):
+    def __init__(self, snapshot_path=None):
         self._lock = threading.RLock()
         self._files = {}
         self._imported_ids = set()
@@ -51,6 +76,10 @@ class CodexUsage:
         self._direct_snapshot_ts = None
         self._last_limit_fetch = 0.0
         self._api_error = None
+        self._snapshot_path = snapshot_path
+        if snapshot_path:
+            with sqlite3.connect(snapshot_path) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS codex_limits (ts TEXT PRIMARY KEY, payload TEXT)")
 
     def _load_imports(self):
         try:
@@ -196,6 +225,10 @@ class CodexUsage:
                 self._direct_limits = limits
                 self._direct_snapshot_ts = stamp
                 self._api_error = None
+            if self._snapshot_path:
+                with sqlite3.connect(self._snapshot_path) as db:
+                    db.execute("INSERT OR REPLACE INTO codex_limits VALUES (?, ?)", (stamp, json.dumps(limits)))
+                    db.execute("DELETE FROM codex_limits WHERE ts < ?", ((dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=90)).isoformat(),))
         except (OSError, ValueError, urllib.error.URLError) as exc:
             with self._lock:
                 self._api_error = str(exc)
@@ -229,17 +262,25 @@ class CodexUsage:
             "reasoning_output_tokens": 0,
             "calls": len(selected),
             "by_model": [],
+            "equivalent_usd": 0.0,
+            "unpriced_tokens": 0,
+            "first_event": min((e["timestamp"] for e in selected), default=None),
         }
         for event in selected:
             for key in ("total_tokens", "input_tokens", "cached_input_tokens",
                         "output_tokens", "reasoning_output_tokens"):
                 out[key] += event[key]
             model = event["model"]
-            by_model[model] = by_model.get(model, 0) + event["total_tokens"]
-        out["by_model"] = [
-            {"model": model, "tokens": tokens}
-            for model, tokens in sorted(by_model.items(), key=lambda p: p[1], reverse=True)
-        ]
+            m = by_model.setdefault(model, {"model": model, "tokens": 0, "equivalent_usd": 0.0, "unpriced_tokens": 0})
+            m["tokens"] += event["total_tokens"]
+            cost = equivalent_usd(event)
+            if cost is None:
+                out["unpriced_tokens"] += event["total_tokens"]
+                m["unpriced_tokens"] += event["total_tokens"]
+            else:
+                out["equivalent_usd"] += cost
+                m["equivalent_usd"] += cost
+        out["by_model"] = sorted(by_model.values(), key=lambda m: m["tokens"], reverse=True)
         return out
 
     @staticmethod
@@ -250,6 +291,8 @@ class CodexUsage:
             if not when:
                 continue
             day = when.astimezone().strftime("%Y-%m-%d")
+            if when.astimezone().date() < dt.datetime.now().astimezone().date() - dt.timedelta(days=days-1):
+                continue
             totals[day] = totals.get(day, 0) + event["total_tokens"]
         return [{"day": day, "tokens": totals[day]} for day in sorted(totals)[-days:]]
 
@@ -257,6 +300,9 @@ class CodexUsage:
     def _heatmap(events):
         cells = {}
         active_days = {}
+        costs = {}
+        models = {}
+        unpriced = set()
         for event in events:
             when = _parse_iso(event.get("timestamp"))
             if not when:
@@ -266,12 +312,28 @@ class CodexUsage:
             dow = (local.weekday() + 1) % 7
             key = (dow, local.hour)
             cells[key] = cells.get(key, 0) + event["total_tokens"]
+            models.setdefault(key, set()).add(event["model"])
+            cost = equivalent_usd(event)
+            if cost is None:
+                unpriced.add(key)
+            else:
+                costs[key] = costs.get(key, 0) + cost
             active_days.setdefault(key, set()).add(local.date())
         return [
             {"dow": dow, "hour": hour,
-             "avg_tokens": tokens / len(active_days[(dow, hour)])}
+             "avg_tokens": tokens / len(active_days[(dow, hour)]),
+             "models": sorted(models[(dow, hour)]),
+             "avg_cost_usd": costs.get((dow,hour), 0) / len(active_days[(dow,hour)]),
+             "partial": (dow,hour) in unpriced}
             for (dow, hour), tokens in sorted(cells.items())
         ]
+
+    def limit_history(self):
+        if not self._snapshot_path:
+            return []
+        with sqlite3.connect(self._snapshot_path) as db:
+            rows = db.execute("SELECT ts, payload FROM codex_limits WHERE ts >= ? ORDER BY ts", ((dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=48)).isoformat(),)).fetchall()
+        return [{"ts": ts, "limits": json.loads(payload)} for ts, payload in rows]
 
     def state(self):
         with self._lock:
@@ -331,6 +393,9 @@ class CodexUsage:
                     "geral": self._summarize(events),
                 },
                 "burn_tokph": recent["total_tokens"] / 2,
+                "burn_by_model": {m["model"]: m["tokens"] / 2 for m in recent["by_model"]},
+                "pricing": {"verified_at": "2026-09-05", "basis": "standard text API; no tool fees or Fast premium", "models": API_PRICES},
+                "limit_history": self.limit_history(),
                 "daily": self._daily_series(events),
                 "heatmap": self._heatmap(events),
                 "native_sessions": len(native_sessions),

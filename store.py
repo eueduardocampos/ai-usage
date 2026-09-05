@@ -467,19 +467,27 @@ class Store:
         """Media de tokens por (dia-da-semana, hora-do-dia) para heatmap.
         dow: 0=Dom 1=Seg ... 6=Sab. Retorna lista de {dow, hour, avg_tokens}."""
         cur = self.conn.cursor()
-        rows = cur.execute("""
-            SELECT
-                CAST(strftime('%w', timestamp, 'localtime') AS INTEGER) dow,
-                CAST(strftime('%H', timestamp, 'localtime') AS INTEGER) hh,
-                SUM(input_tokens+output_tokens+cache_read+cache_creation) tokens,
-                COUNT(DISTINCT strftime('%Y-%m-%d', timestamp, 'localtime')) days
-            FROM turns
-            GROUP BY dow, hh
-            ORDER BY dow, hh
-        """).fetchall()
-        return [{"dow": r["dow"], "hour": r["hh"],
-                 "avg_tokens": (r["tokens"] or 0) / r["days"] if r["days"] else 0}
-                for r in rows if r["dow"] is not None and r["hh"] is not None]
+        rows = cur.execute("""SELECT timestamp, model, COALESCE(source,'code') src,
+            input_tokens i, output_tokens o, cache_read cr, cache_creation cc,
+            COALESCE(cost,0) stored,
+            strftime('%Y-%m-%d',timestamp,'localtime') day,
+            CAST(strftime('%w',timestamp,'localtime') AS INTEGER) dow,
+            CAST(strftime('%H',timestamp,'localtime') AS INTEGER) hour
+            FROM turns""").fetchall()
+        cells = {}
+        for r in rows:
+            if r['dow'] is None or r['hour'] is None:
+                continue
+            cell = cells.setdefault((r['dow'],r['hour']),
+                {'tokens':0, 'cost':0, 'days':set(), 'models':set()})
+            i,o,cr,cc = (r[k] or 0 for k in ('i','o','cr','cc'))
+            cell['tokens'] += i+o+cr+cc
+            cell['cost'] += group_cost(r['src'],r['model'],i,o,cr,cc,r['stored'])
+            cell['days'].add(r['day'])
+            cell['models'].add(r['model'])
+        return [{'dow':dow,'hour':hour,'avg_tokens':c['tokens']/len(c['days']),
+                 'avg_cost':c['cost']/len(c['days']), 'models':sorted(c['models'])}
+                for (dow,hour),c in sorted(cells.items())]
 
     @_locked
     def snapshot_history(self, hours: int = 48):

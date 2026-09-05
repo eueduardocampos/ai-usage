@@ -196,7 +196,8 @@ def build_state() -> dict:
                    "currency": cfg.get("currency"),
                    "usd_brl": cfg.get("usd_brl") or Ctx.fx_rate,
                    "subscription_brl": cfg.get("subscription_brl"),
-                   "chatgpt_subscription_brl": cfg.get("chatgpt_subscription_brl")},
+                   "chatgpt_subscription_brl": cfg.get("chatgpt_subscription_brl"),
+                   "chatgpt_extra_brl": cfg.get("chatgpt_extra_brl") if cfg.get("chatgpt_extra_month") == dt.datetime.now().strftime("%Y-%m") else None},
     }
 
 
@@ -428,9 +429,15 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/config":
             # refresh_seconds saiu de proposito: o ritmo da API e fixo
             # (POLL_SECONDS) para nao estourar o limite da conta.
-            for k in ("intended_hours", "subscription_brl", "chatgpt_subscription_brl", "plan"):
+            for key in ("chatgpt_subscription_brl", "chatgpt_extra_brl"):
+                if key in body and (isinstance(body[key], bool) or not isinstance(body[key], (int, float)) or not 0 <= body[key] < float("inf")):
+                    self._send(400, json.dumps({"error": "valor monetario invalido"}))
+                    return
+            for k in ("intended_hours", "subscription_brl", "chatgpt_subscription_brl", "chatgpt_extra_brl", "plan"):
                 if k in body:
                     Ctx.cfg[k] = body[k]
+            if "chatgpt_extra_brl" in body:
+                Ctx.cfg["chatgpt_extra_month"] = dt.datetime.now().strftime("%Y-%m")
             save_config(Ctx.cfg)
             self._send(200, json.dumps({"ok": True, "config": Ctx.cfg}))
         elif p == "/api/semrush":
@@ -522,7 +529,7 @@ def _db_path():
 def run():
     Ctx.cfg = load_config()
     Ctx.store = store_mod.Store(_db_path())
-    Ctx.codex = codex_usage.CodexUsage()
+    Ctx.codex = codex_usage.CodexUsage(_db_path())
     Ctx.codex.scan()
     Ctx.codex.refresh_limits(force=True)
     Ctx.token_store = auth.TokenStore(HERE)
