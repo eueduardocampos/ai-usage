@@ -9,5 +9,6 @@
   "open_browser": true,
   "usd_brl": null,
   "subscription_brl": null,
+  "chatgpt_subscription_brl": null,
   "plan": null
 }

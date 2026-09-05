@@ -195,7 +195,8 @@ def build_state() -> dict:
                    "intended_hours": cfg.get("intended_hours"),
                    "currency": cfg.get("currency"),
                    "usd_brl": cfg.get("usd_brl") or Ctx.fx_rate,
-                   "subscription_brl": cfg.get("subscription_brl")},
+                   "subscription_brl": cfg.get("subscription_brl"),
+                   "chatgpt_subscription_brl": cfg.get("chatgpt_subscription_brl")},
     }
 
 
@@ -341,6 +342,7 @@ def scan_loop():
             Ctx.store.scan(log=lambda *a: None)
             if Ctx.codex:
                 Ctx.codex.scan()
+                Ctx.codex.refresh_limits()
         except Exception as e:
             print(f"[scan_loop] {e}")
 
@@ -426,7 +428,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/config":
             # refresh_seconds saiu de proposito: o ritmo da API e fixo
             # (POLL_SECONDS) para nao estourar o limite da conta.
-            for k in ("intended_hours", "subscription_brl", "plan"):
+            for k in ("intended_hours", "subscription_brl", "chatgpt_subscription_brl", "plan"):
                 if k in body:
                     Ctx.cfg[k] = body[k]
             save_config(Ctx.cfg)
@@ -455,6 +457,9 @@ class Handler(BaseHTTPRequestHandler):
                     "retry_in": int(restante)}))
             else:
                 poll_once()
+                if Ctx.codex:
+                    Ctx.codex.scan()
+                    Ctx.codex.refresh_limits(force=True)
                 self._send(200, json.dumps({"ok": True}))
         else:
             self._send(404, "not found", "text/plain")
@@ -470,6 +475,7 @@ DEFAULTS = {"port": 8090, "refresh_seconds": 120, "currency": "BRL",
             "semrush_units_updated_at": None,
             "usd_brl": None,  # None = cotacao automatica (AwesomeAPI, cache 1h)
             "subscription_brl": None,  # valor mensal da licenca (R$), p/ balanço
+            "chatgpt_subscription_brl": None,  # assinatura ChatGPT; comparacao por uso da cota
             "plan": None}  # id da licenca (pro, max_5x, ...); None = usar a detectada
 
 
@@ -518,6 +524,7 @@ def run():
     Ctx.store = store_mod.Store(_db_path())
     Ctx.codex = codex_usage.CodexUsage()
     Ctx.codex.scan()
+    Ctx.codex.refresh_limits(force=True)
     Ctx.token_store = auth.TokenStore(HERE)
 
     poll_once()  # poll inicial sincrono: auth_connected ja correto na 1a carga

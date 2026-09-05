@@ -418,7 +418,8 @@ function ChatGPTLimit({ label, window, now, snapshotTs }) {
   );
 }
 
-function ChatGPTPanel({ chatgpt, now }) {
+function ChatGPTPanel({ chatgpt, now, subscription, onSaveSubscription }) {
+  const [subInput, setSubInput] = useState('');
   const history = chatgpt?.history || {};
   const limits = [];
   (chatgpt?.limits || []).forEach((limit) => {
@@ -427,19 +428,68 @@ function ChatGPTPanel({ chatgpt, now }) {
     if (limit.secondary) limits.push({ key: `${limit.id}-secondary`, label: name, window: limit.secondary, ts: limit.snapshot_ts });
   });
   const plan = chatgpt?.limits?.find((l) => l.plan_type)?.plan_type;
+  const creditInfo = chatgpt?.limits?.find((l) => l.credits)?.credits;
+  const creditBalance = creditInfo?.balance;
+  const hasCredits = creditInfo?.has_credits ?? creditInfo?.hasCredits;
+  const weekly = limits.find((item) => item.window?.window_minutes === 10080 && item.label === 'Codex');
+  const weeklyPct = weekly?.window?.used_percent;
+  const weeklyCost = subscription != null ? subscription * 12 / 52 : null;
+  const resetMs = weekly?.window?.resets_at ? new Date(weekly.window.resets_at).getTime() - now : null;
+  const closing = resetMs != null && resetMs < 24 * 3600 * 1000;
+  const valueLabel = weeklyPct == null
+    ? 'aguardando limite'
+    : closing
+      ? weeklyPct >= 70 ? 'licença bem utilizada' : weeklyPct >= 35 ? 'uso moderado' : 'uso baixo nesta semana'
+      : 'acompanhando esta semana';
   return (
     <Card>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="mc-label" style={{ color: C.openai }}>CHATGPT · CODEX</div>
-          <div className="mc-display mt-1 text-xl font-bold">Assinatura ChatGPT</div>
+          <div className="mc-display mt-1 text-xl font-bold">Assinatura ChatGPT · cota do Codex</div>
           <div className="mc-num mt-1 text-[12px]" style={{ color: C.muted }}>
-            Codex incluído · sem uso da API paga{plan ? ` · plano ${plan}` : ''}
+            não inclui chat comum, imagens, voz ou uploads · atualiza a cada {chatgpt?.limits_refresh_seconds || 300}s{plan ? ` · plano ${plan}` : ''}
           </div>
         </div>
         <Chip color={chatgpt?.available ? C.openai : C.warn}>
           {chatgpt?.available ? 'medição local ativa' : 'aguardando Codex'}
         </Chip>
+      </div>
+
+      <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-[1fr_auto] md:items-end" style={{ borderColor: C.border }}>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <div className="mc-label">uso semanal do Codex</div>
+            <div className="mc-num mt-1 text-lg font-semibold">{weeklyPct == null ? '—' : `${Math.round(weeklyPct)}%`}</div>
+            <div className="mc-num text-[11px]" style={{ color: C.openai }}>{valueLabel}</div>
+          </div>
+          <div>
+            <div className="mc-label">assinatura mensal</div>
+            <div className="mc-num mt-1 text-lg font-semibold">{subscription == null ? '—' : fmtMoney(subscription, 'BRL')}</div>
+            <div className="mc-num text-[11px]" style={{ color: C.muted }}>valor efetivamente pago</div>
+          </div>
+          <div>
+            <div className="mc-label">custo fixo por semana</div>
+            <div className="mc-num mt-1 text-lg font-semibold">{weeklyCost == null ? '—' : fmtMoney(weeklyCost, 'BRL')}</div>
+            <div className="mc-num text-[11px]" style={{ color: C.muted }}>mensal × 12 ÷ 52</div>
+          </div>
+        </div>
+        <div className="flex items-end gap-2">
+          <div>
+            <div className="mc-label">quanto você paga (R$)</div>
+            <input
+              className="mc-input"
+              placeholder={subscription != null ? String(subscription) : 'ex.: 999'}
+              value={subInput}
+              onChange={(e) => setSubInput(e.target.value)}
+            />
+          </div>
+          <button className="mc-btn" onClick={() => {
+            const value = parseFloat(subInput.replace(',', '.'));
+            if (!Number.isNaN(value) && value >= 0) onSaveSubscription(value);
+            setSubInput('');
+          }}>salvar</button>
+        </div>
       </div>
 
       <div className="grid gap-3 xl:grid-cols-12">
@@ -480,6 +530,42 @@ function ChatGPTPanel({ chatgpt, now }) {
           : ''}
         {chatgpt?.native_sessions > 0 ? ` · ${fmtInt(chatgpt.native_sessions)} sessões nativas` : ''}
         {' · tokens processados; cache já incluído na entrada'}
+      </div>
+
+      <div className="mt-4 border-t pt-4" style={{ borderColor: C.border }}>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="mc-label" style={{ color: C.openai }}>CENTRAL OPENAI</div>
+            <div className="mc-num mt-1 text-[12px]" style={{ color: C.muted }}>
+              o painel atualiza o Codex automaticamente; os demais recursos abrem na conta oficial
+            </div>
+          </div>
+          <div className="mc-num text-[12px]" style={{ color: hasCredits ? C.openai : C.muted }}>
+            créditos extras: {creditBalance != null ? creditBalance : hasCredits ? 'disponíveis' : 'nenhum'}
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[
+            ['Uso do Codex', 'cota, reset e créditos', 'https://chatgpt.com/codex/settings/usage'],
+            ['Assinatura ChatGPT', 'plano, cobrança e faturas', 'https://chatgpt.com/'],
+            ['Custos da API', 'consumo comercial separado', 'https://platform.openai.com/usage'],
+          ].map(([title, description, href]) => (
+            <a
+              key={title}
+              className="rounded-xl border p-3 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
+              style={{ borderColor: C.border }}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="mc-num text-[13px] font-semibold">{title}</span>
+                <span style={{ color: C.openai }}>↗</span>
+              </div>
+              <div className="mc-num mt-1 text-[11px]" style={{ color: C.muted }}>{description}</div>
+            </a>
+          ))}
+        </div>
       </div>
     </Card>
   );
@@ -731,15 +817,20 @@ function BalancePanel({ mes, geral, extra, sub, plan, fx, onSaveSub, onSavePlan 
   );
 }
 
-function ScopeTile({ label, h, fx }) {
+function CombinedScopeTile({ label, claude, chatgpt, fx }) {
   return (
     <Card>
-      <div className="mc-label mb-1.5">{label}</div>
-      <div className="mc-num text-2xl font-bold">{fmtTokens(h?.total_tokens)}</div>
-      <div className="mc-num mt-1 space-y-0.5 text-[12px]" style={{ color: C.muted }}>
-        <div>{costBRL(h?.total_cost, fx)} · {fmtInt(h?.total_turns)} turnos</div>
+      <div className="mc-label mb-2">{label}</div>
+      <div className="space-y-2">
         <div>
-          {fmtTokens(h?.tokens_per_hour)}/h · {fmtInt(h?.active_hours)}h ativas
+          <div className="mc-num text-[11px]" style={{ color: C.s1 }}>● CLAUDE</div>
+          <div className="mc-num text-xl font-bold">{fmtTokens(claude?.total_tokens)}</div>
+          <div className="mc-num text-[11px]" style={{ color: C.muted }}>{costBRL(claude?.total_cost, fx)} equivalente</div>
+        </div>
+        <div className="border-t pt-2" style={{ borderColor: C.border }}>
+          <div className="mc-num text-[11px]" style={{ color: C.openai }}>● CHATGPT</div>
+          <div className="mc-num text-xl font-bold">{fmtTokens(chatgpt?.total_tokens)}</div>
+          <div className="mc-num text-[11px]" style={{ color: C.muted }}>{fmtInt(chatgpt?.calls)} chamadas Codex</div>
         </div>
       </div>
     </Card>
@@ -791,25 +882,36 @@ const chartBase = {
   },
 };
 
-function DailyChart({ daily }) {
+function DailyChart({ daily, chatgpt }) {
+  const labels = [...new Set([...(daily || []).map((d) => d.day), ...(chatgpt || []).map((d) => d.day)])].sort();
+  const claudeMap = Object.fromEntries((daily || []).map((d) => [d.day, d.tokens]));
+  const chatgptMap = Object.fromEntries((chatgpt || []).map((d) => [d.day, d.tokens]));
   return (
     <div className="h-52 2xl:h-60">
       <Bar
         data={{
-          labels: (daily || []).map((d) => d.day.slice(5)),
+          labels: labels.map((day) => day.slice(5)),
           datasets: [
             {
-              label: 'tokens',
-              data: (daily || []).map((d) => d.tokens),
-              backgroundColor: C.s1,
+              label: 'Claude',
+              data: labels.map((day) => claudeMap[day] || 0),
+              backgroundColor: `${C.s1}99`,
               borderRadius: 4,
-              maxBarThickness: 22,
+              maxBarThickness: 28,
+            },
+            {
+              label: 'ChatGPT',
+              data: labels.map((day) => chatgptMap[day] || 0),
+              backgroundColor: `${C.openai}dd`,
+              borderRadius: 4,
+              maxBarThickness: 14,
             },
           ],
         }}
         options={{
           ...chartBase,
-          plugins: { ...chartBase.plugins, legend: { display: false } },
+          plugins: { ...chartBase.plugins },
+          datasets: { bar: { grouped: false } },
           scales: {
             ...chartBase.scales,
             y: { ...chartBase.scales.y, ticks: { ...chartBase.scales.y.ticks, callback: (v) => fmtTokens(v) } },
@@ -1034,7 +1136,12 @@ export default function Dashboard() {
           <BurnPanel burn={burnMap} />
         </section>
 
-        <ChatGPTPanel chatgpt={state?.chatgpt} now={now} />
+        <ChatGPTPanel
+          chatgpt={state?.chatgpt}
+          now={now}
+          subscription={state?.config?.chatgpt_subscription_brl}
+          onSaveSubscription={(value) => api.setConfig({ chatgpt_subscription_brl: value }).then(loadState)}
+        />
 
         {/* licença vs consumo */}
         <BalancePanel
@@ -1050,19 +1157,19 @@ export default function Dashboard() {
 
         {/* escopos históricos */}
         <section className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
-          <ScopeTile label="hoje" h={state?.history?.dia} fx={fx} />
-          <ScopeTile label="esta semana" h={state?.history?.semana} fx={fx} />
-          <ScopeTile label="este mês" h={state?.history?.mes} fx={fx} />
-          <ScopeTile label="vida toda" h={state?.history?.geral} fx={fx} />
+          <CombinedScopeTile label="hoje" claude={state?.history?.dia} chatgpt={state?.chatgpt?.history?.dia} fx={fx} />
+          <CombinedScopeTile label="esta semana" claude={state?.history?.semana} chatgpt={state?.chatgpt?.history?.semana} fx={fx} />
+          <CombinedScopeTile label="este mês" claude={state?.history?.mes} chatgpt={state?.chatgpt?.history?.mes} fx={fx} />
+          <CombinedScopeTile label="vida toda" claude={state?.history?.geral} chatgpt={state?.chatgpt?.history?.geral} fx={fx} />
         </section>
 
         {/* gráficos */}
         <section className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           <Card>
             <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-              tokens por dia · 30d
+              tokens por dia · Claude × ChatGPT · 30d
             </div>
-            <DailyChart daily={history?.daily} />
+            <DailyChart daily={history?.daily} chatgpt={state?.chatgpt?.daily} />
           </Card>
           <Card>
             <div className="mc-label mb-3" style={{ color: C.ink2 }}>
@@ -1079,9 +1186,9 @@ export default function Dashboard() {
         {heatmap.length > 0 && (
           <Card>
             <div className="mc-label mb-3" style={{ color: C.ink2 }}>
-              ritmo de uso · média de tokens por hora
+              ritmo de uso · Claude × ChatGPT · média por hora
             </div>
-            <HeatmapChart heatmap={heatmap} />
+            <HeatmapChart heatmap={heatmap} chatgpt={state?.chatgpt?.heatmap} />
           </Card>
         )}
 

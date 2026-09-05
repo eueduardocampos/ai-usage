@@ -12,11 +12,17 @@ import glob
 import json
 import os
 import threading
+import time
+import urllib.error
+import urllib.request
 
 
 HOME = os.path.expanduser("~")
 SESSIONS_GLOB = os.path.join(HOME, ".codex", "sessions", "**", "*.jsonl")
 IMPORTS_PATH = os.path.join(HOME, ".codex", "external_agent_session_imports.json")
+AUTH_PATH = os.path.join(HOME, ".codex", "auth.json")
+USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+LIMIT_REFRESH_SECONDS = 300
 
 
 def _parse_iso(value):
@@ -41,6 +47,10 @@ class CodexUsage:
         self._files = {}
         self._imported_ids = set()
         self._imports_mtime = None
+        self._direct_limits = None
+        self._direct_snapshot_ts = None
+        self._last_limit_fetch = 0.0
+        self._api_error = None
 
     def _load_imports(self):
         try:
@@ -131,6 +141,65 @@ class CodexUsage:
             for path in set(self._files) - paths:
                 del self._files[path]
 
+    def refresh_limits(self, force=False):
+        """Consulta os limites da assinatura ChatGPT, nunca a API comercial.
+
+        Reusa o OAuth mantido pelo Codex e apenas le auth.json a cada consulta;
+        nao grava, renova nem persiste os tokens em outro lugar.
+        """
+        if not force and time.time() - self._last_limit_fetch < LIMIT_REFRESH_SECONDS:
+            return
+        self._last_limit_fetch = time.time()
+        try:
+            with open(AUTH_PATH, encoding="utf-8") as f:
+                auth = json.load(f)
+            tokens = auth.get("tokens") or {}
+            access = tokens.get("access_token")
+            account = tokens.get("account_id")
+            if not access or not account or auth.get("auth_mode") != "chatgpt":
+                raise ValueError("sessao ChatGPT do Codex nao encontrada")
+            req = urllib.request.Request(USAGE_URL, headers={
+                "Authorization": "Bearer " + access,
+                "ChatGPT-Account-ID": account,
+                "User-Agent": "claude-usage-panel/1.0",
+            })
+            with urllib.request.urlopen(req, timeout=12) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+            limits = []
+            stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+
+            def normalized(limit_id, name, rate, credits=None):
+                def window(data):
+                    if not data:
+                        return None
+                    return {
+                        "used_percent": data.get("used_percent"),
+                        "window_minutes": (data.get("limit_window_seconds") or 0) / 60,
+                        "resets_at": _reset_iso(data.get("reset_at")),
+                    }
+                return {
+                    "id": limit_id,
+                    "name": name,
+                    "plan_type": raw.get("plan_type"),
+                    "primary": window((rate or {}).get("primary_window")),
+                    "secondary": window((rate or {}).get("secondary_window")),
+                    "credits": credits,
+                    "snapshot_ts": stamp,
+                }
+
+            limits.append(normalized("codex", "Codex", raw.get("rate_limit"), raw.get("credits")))
+            for extra in raw.get("additional_rate_limits") or []:
+                limits.append(normalized(
+                    extra.get("metered_feature") or extra.get("limit_name"),
+                    extra.get("limit_name"), extra.get("rate_limit")))
+            with self._lock:
+                self._direct_limits = limits
+                self._direct_snapshot_ts = stamp
+                self._api_error = None
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            with self._lock:
+                self._api_error = str(exc)
+
     @staticmethod
     def _scope_start(scope):
         now = dt.datetime.now().astimezone()
@@ -172,6 +241,37 @@ class CodexUsage:
             for model, tokens in sorted(by_model.items(), key=lambda p: p[1], reverse=True)
         ]
         return out
+
+    @staticmethod
+    def _daily_series(events, days=30):
+        totals = {}
+        for event in events:
+            when = _parse_iso(event.get("timestamp"))
+            if not when:
+                continue
+            day = when.astimezone().strftime("%Y-%m-%d")
+            totals[day] = totals.get(day, 0) + event["total_tokens"]
+        return [{"day": day, "tokens": totals[day]} for day in sorted(totals)[-days:]]
+
+    @staticmethod
+    def _heatmap(events):
+        cells = {}
+        active_days = {}
+        for event in events:
+            when = _parse_iso(event.get("timestamp"))
+            if not when:
+                continue
+            local = when.astimezone()
+            # Python: segunda=0; o frontend usa domingo=0.
+            dow = (local.weekday() + 1) % 7
+            key = (dow, local.hour)
+            cells[key] = cells.get(key, 0) + event["total_tokens"]
+            active_days.setdefault(key, set()).add(local.date())
+        return [
+            {"dow": dow, "hour": hour,
+             "avg_tokens": tokens / len(active_days[(dow, hour)])}
+            for (dow, hour), tokens in sorted(cells.items())
+        ]
 
     def state(self):
         with self._lock:
@@ -216,6 +316,8 @@ class CodexUsage:
                     "snapshot_ts": timestamp,
                 })
 
+            if self._direct_limits is not None:
+                limits = self._direct_limits
             now = dt.datetime.now(dt.timezone.utc)
             recent = self._summarize(events, now - dt.timedelta(hours=2))
             return {
@@ -229,7 +331,12 @@ class CodexUsage:
                     "geral": self._summarize(events),
                 },
                 "burn_tokph": recent["total_tokens"] / 2,
+                "daily": self._daily_series(events),
+                "heatmap": self._heatmap(events),
                 "native_sessions": len(native_sessions),
                 "resumed_imported_sessions": len(resumed_imports),
                 "ignored_imported_sessions": max(0, len(self._imported_ids) - len(resumed_imports)),
+                "limits_source": "chatgpt" if self._direct_limits is not None else "logs",
+                "limits_refresh_seconds": LIMIT_REFRESH_SECONDS,
+                "limits_error": self._api_error,
             }

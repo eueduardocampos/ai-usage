@@ -21,6 +21,9 @@ separada para a **assinatura ChatGPT**. Ela lê somente os contadores locais em
 `~/.codex/sessions`: volume de tokens, modelos e os percentuais de limite que o
 próprio Codex registra. Isso não usa nem mede a API paga da OpenAI.
 
+Os percentuais são da cota do **Codex incluída na assinatura ChatGPT**. Chat
+comum, imagens, voz e uploads têm limites separados e não entram neste painel.
+
 Sessões importadas do Claude para o Codex são reconhecidas por
 `~/.codex/external_agent_session_imports.json`. O histórico importado continua
 contabilizado no Claude; se a conversa for retomada no Codex, apenas as novas
