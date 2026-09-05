@@ -18,6 +18,7 @@ from datetime import timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import auth
+import codex_usage
 import forecast
 import store as store_mod
 import usage_api
@@ -32,6 +33,7 @@ WINDOW_LABELS = {"five_hour": "Sessao (5h)", "seven_day": "Semana (7d)",
 
 class Ctx:
     store = None
+    codex = None
     cfg = None
     token_store = None
     last_error = None
@@ -186,6 +188,7 @@ def build_state() -> dict:
         "dominant_model": dominant,
         "extra_usage": extra,
         "history": history,
+        "chatgpt": Ctx.codex.state() if Ctx.codex else None,
         "plan": plan,
         "semrush": semrush,
         "config": {"refresh_seconds": _poll_interval(),
@@ -336,6 +339,8 @@ def scan_loop():
         time.sleep(SCAN_INTERVAL)
         try:
             Ctx.store.scan(log=lambda *a: None)
+            if Ctx.codex:
+                Ctx.codex.scan()
         except Exception as e:
             print(f"[scan_loop] {e}")
 
@@ -511,6 +516,8 @@ def _db_path():
 def run():
     Ctx.cfg = load_config()
     Ctx.store = store_mod.Store(_db_path())
+    Ctx.codex = codex_usage.CodexUsage()
+    Ctx.codex.scan()
     Ctx.token_store = auth.TokenStore(HERE)
 
     poll_once()  # poll inicial sincrono: auth_connected ja correto na 1a carga

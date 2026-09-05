@@ -36,6 +36,7 @@ const C = {
   good: '#21c45d', // --success
   warn: '#facc14', // --warning
   crit: '#f2404c', // --destructive
+  openai: '#10a37f',
 };
 const WIN_COLORS = { five_hour: C.s1, seven_day: C.s2, seven_day_sonnet: C.s3 };
 const WIN_SHORT = { five_hour: 'SESSÃO 5H', seven_day: 'SEMANA 7D', seven_day_sonnet: 'SONNET 7D' };
@@ -191,7 +192,7 @@ function StatusBar({ state, latency, now, onRefresh, onReconnect, aviso }) {
         <div className="flex items-center gap-2.5">
           <span className={`mc-live ${limitado ? 'warn' : connected ? '' : 'off'}`} />
           <div className="leading-tight">
-            <div className="text-[13px] font-bold tracking-wide">CLAUDE USAGE · OPS</div>
+            <div className="text-[13px] font-bold tracking-wide">AI USAGE · OPS</div>
             <div className="mc-label">{situacao}</div>
           </div>
         </div>
@@ -380,6 +381,105 @@ function WindowCard({ k, w, now, snapshotTs }) {
             estoura {new Date(w.eta_100).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
           </span>
         )}
+      </div>
+    </Card>
+  );
+}
+
+function windowDuration(minutes) {
+  if (!minutes) return 'janela';
+  if (minutes % 10080 === 0) return `${minutes / 10080} semana${minutes > 10080 ? 's' : ''}`;
+  if (minutes % 1440 === 0) return `${minutes / 1440} dia${minutes > 1440 ? 's' : ''}`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}min`;
+}
+
+function ChatGPTLimit({ label, window, now, snapshotTs }) {
+  const pct = window?.used_percent;
+  const remaining = pct == null ? null : Math.max(0, 100 - pct);
+  const color = pct >= 90 ? C.crit : pct >= 70 ? C.warn : C.openai;
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: C.border, background: 'rgba(16,163,127,0.06)' }}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="mc-label" style={{ color: C.ink2 }}>{label} · {windowDuration(window?.window_minutes)}</span>
+        <span className="mc-num text-[11px]" style={{ color: C.muted }}>{ago(snapshotTs, now)}</span>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="mc-num text-3xl font-bold">{pct == null ? '—' : `${Math.round(pct)}%`}</span>
+        <span className="mc-num text-[12px]" style={{ color: C.muted }}>
+          {remaining == null ? 'uso indisponível' : `${Math.round(remaining)}% disponível`}
+        </span>
+      </div>
+      <div className="mt-3"><GaugeBar pct={pct} color={color} /></div>
+      <div className="mc-num mt-2 text-[12px]" style={{ color: C.muted }}>
+        reset em <span style={{ color: C.ink2 }}>{fmtCountdown(window?.resets_at, now)}</span>
+      </div>
+    </div>
+  );
+}
+
+function ChatGPTPanel({ chatgpt, now }) {
+  const history = chatgpt?.history || {};
+  const limits = [];
+  (chatgpt?.limits || []).forEach((limit) => {
+    const name = limit.name || (limit.id === 'codex' ? 'Codex' : limit.id);
+    if (limit.primary) limits.push({ key: `${limit.id}-primary`, label: name, window: limit.primary, ts: limit.snapshot_ts });
+    if (limit.secondary) limits.push({ key: `${limit.id}-secondary`, label: name, window: limit.secondary, ts: limit.snapshot_ts });
+  });
+  const plan = chatgpt?.limits?.find((l) => l.plan_type)?.plan_type;
+  return (
+    <Card>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="mc-label" style={{ color: C.openai }}>CHATGPT · CODEX</div>
+          <div className="mc-display mt-1 text-xl font-bold">Assinatura ChatGPT</div>
+          <div className="mc-num mt-1 text-[12px]" style={{ color: C.muted }}>
+            Codex incluído · sem uso da API paga{plan ? ` · plano ${plan}` : ''}
+          </div>
+        </div>
+        <Chip color={chatgpt?.available ? C.openai : C.warn}>
+          {chatgpt?.available ? 'medição local ativa' : 'aguardando Codex'}
+        </Chip>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-12">
+        <div className="grid gap-3 sm:grid-cols-2 xl:col-span-7">
+          {limits.length > 0 ? limits.map((item) => (
+            <ChatGPTLimit key={item.key} label={item.label} window={item.window} now={now} snapshotTs={item.ts} />
+          )) : (
+            <div className="mc-num rounded-xl border p-3 text-[13px] sm:col-span-2" style={{ borderColor: C.border, color: C.muted }}>
+              o limite aparece depois da primeira resposta do Codex
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 xl:col-span-5">
+          {[
+            ['hoje', history.dia],
+            ['esta semana', history.semana],
+            ['este mês', history.mes],
+            ['queima agora', { total_tokens: chatgpt?.burn_tokph }],
+          ].map(([label, data]) => (
+            <div key={label} className="rounded-xl border p-3" style={{ borderColor: C.border }}>
+              <div className="mc-label">{label}</div>
+              <div className="mc-num mt-1 text-xl font-semibold">
+                {fmtTokens(data?.total_tokens)}{label === 'queima agora' ? '/h' : ''}
+              </div>
+              {data?.calls != null && (
+                <div className="mc-num text-[11px]" style={{ color: C.muted }}>{fmtInt(data.calls)} chamadas</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mc-num mt-3 border-t pt-3 text-[11px]" style={{ borderColor: C.border, color: C.muted }}>
+        {fmtInt(chatgpt?.ignored_imported_sessions)} sessões importadas do Claude ignoradas
+        {chatgpt?.resumed_imported_sessions > 0
+          ? ` · ${fmtInt(chatgpt.resumed_imported_sessions)} retomada no Codex (contando apenas o uso novo)`
+          : ''}
+        {chatgpt?.native_sessions > 0 ? ` · ${fmtInt(chatgpt.native_sessions)} sessões nativas` : ''}
+        {' · tokens processados; cache já incluído na entrada'}
       </div>
     </Card>
   );
@@ -901,6 +1001,7 @@ export default function Dashboard() {
       />
 
       <main className="mx-auto w-full max-w-[2400px] space-y-4 px-4 pb-12 pt-4 sm:px-6 xl:px-8">
+        <div className="mc-label" style={{ color: C.s1 }}>CLAUDE · ANTHROPIC</div>
         {/* decisão + contador vivo */}
         <section className="grid gap-4 xl:grid-cols-12">
           <div className="xl:col-span-7 2xl:col-span-8">
@@ -932,6 +1033,8 @@ export default function Dashboard() {
           <SourcePanel extra={state?.extra_usage} cur={state?.config?.currency || 'BRL'} />
           <BurnPanel burn={burnMap} />
         </section>
+
+        <ChatGPTPanel chatgpt={state?.chatgpt} now={now} />
 
         {/* licença vs consumo */}
         <BalancePanel

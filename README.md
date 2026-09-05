@@ -1,10 +1,11 @@
-# Painel de Consumo do Claude
+# Painel de Consumo de IA
 
-Um painel local que mostra, em um só lugar, **quanto você já consumiu** no Claude
-Code e **se é seguro continuar / trocar de modelo agora** — ou se você corre o
-risco de bater o limite no meio de um projeto.
+Um painel local que acompanha separadamente a assinatura Claude e a assinatura
+ChatGPT usada pelo Codex. No Claude, ele também mostra **se é seguro continuar /
+trocar de modelo agora** — ou se você corre o risco de bater o limite no meio de
+um projeto.
 
-![Painel de Consumo do Claude](docs/painel.png)
+![Painel de Consumo de IA](docs/painel.png)
 
 Ele junta duas fontes:
 
@@ -14,6 +15,16 @@ Ele junta duas fontes:
 2. **A API de uso da sua conta** (`/api/oauth/usage`) → % usada da **sessão (5h)**,
    da **semana (7d)** e do bucket de **Sonnet (7d)**, horários de reset e créditos
    de excedente.
+
+Quando o Codex Desktop ou CLI está instalado, o painel também cria uma área
+separada para a **assinatura ChatGPT**. Ela lê somente os contadores locais em
+`~/.codex/sessions`: volume de tokens, modelos e os percentuais de limite que o
+próprio Codex registra. Isso não usa nem mede a API paga da OpenAI.
+
+Sessões importadas do Claude para o Codex são reconhecidas por
+`~/.codex/external_agent_session_imports.json`. O histórico importado continua
+contabilizado no Claude; se a conversa for retomada no Codex, apenas as novas
+chamadas OpenAI entram na área ChatGPT.
 
 Com isso, mostra um **semáforo por janela** e um **veredito direto**: *"dá pra
 trocar pra Opus agora ou vou estourar antes de terminar?"*.
