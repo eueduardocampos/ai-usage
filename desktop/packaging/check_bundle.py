@@ -6,8 +6,15 @@ import tempfile
 root=Path(__file__).resolve().parents[2]
 bundle=root/'desktop/src-tauri/target'/sys.argv[1]/'release/bundle'
 if sys.platform=='darwin':
-    engine=next(bundle.glob('macos/*.app/Contents/Resources/engine/ai-usage-engine'))
-    subprocess.run([sys.executable,str(root/'desktop/packaging/smoke.py'),str(engine)],check=True)
+    with tempfile.TemporaryDirectory() as temp:
+        mount=Path(temp)/'mount'
+        mount.mkdir()
+        subprocess.run(['hdiutil','attach','-readonly','-nobrowse','-mountpoint',str(mount),str(next(bundle.glob('dmg/*.dmg')))],check=True)
+        try:
+            engine=next(mount.glob('*.app/Contents/Resources/engine/ai-usage-engine'))
+            subprocess.run([sys.executable,str(root/'desktop/packaging/smoke.py'),str(engine)],check=True)
+        finally:
+            subprocess.run(['hdiutil','detach',str(mount)],check=True)
 elif sys.platform.startswith('linux'):
     with tempfile.TemporaryDirectory() as temp:
         subprocess.run(['dpkg-deb','-x',str(next(bundle.glob('deb/*.deb'))),temp],check=True)
