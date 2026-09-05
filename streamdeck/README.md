@@ -71,3 +71,33 @@ spawna o plugin de verdade, gira os dials e confere cada `setImage`/`setFeedback
 ```bash
 node streamdeck/test/fake_sd.js
 ```
+
+## AI Usage 4 · Claude + Codex
+
+O perfil `AI Usage (SD+).streamDeckProfile` usa as 8 teclas e os 4 encoders:
+
+| Linha | Tecla 1 | Tecla 2 | Tecla 3 | Tecla 4 |
+| --- | --- | --- | --- | --- |
+| Superior | Claude 5h | Claude 7d | Codex principal | Spark |
+| Inferior | Claude tokens/h | Codex tokens/h | Claude retorno | Codex retorno |
+
+| Dial | Rotação |
+| --- | --- |
+| Cotas | Todas as janelas reais das contas, com consumo primeiro |
+| Ritmo | Totais por plataforma e cada modelo nas últimas 2 horas |
+| Equivalência | Claude e Codex em hoje, semana e mês |
+| Totais | Tokens combinados, separados e retorno das assinaturas |
+
+Laranja identifica Claude; verde identifica Codex. Cotas >=90% ficam vermelhas;
+`!` e cinza indicam snapshot antigo ou erro de consulta. Um problema no login
+Claude não desconecta a exibição do Codex. O plugin não cria uma janela Codex de
+5h quando a conta só fornece 7d. Spark sem dados mostra `--`.
+
+Retorno = equivalência de API dividida por assinatura + extras informados. Usa
+mensalidade e câmbio do painel (ChatGPT configurado em R$555 nesta instalação).
+Modelos sem preço são identificados como parcial; saldo de créditos não é reais.
+O botão e a pressão no dial abrem o painel; toque atualiza a leitura local.
+
+As ações v3 e seus UUIDs continuam disponíveis. Gere o perfil com
+`python3 streamdeck/build_profile.py`. Testes: `node streamdeck/test/unified.js`
+e `node streamdeck/test/fake_sd.js` (inclui ações novas e legadas).

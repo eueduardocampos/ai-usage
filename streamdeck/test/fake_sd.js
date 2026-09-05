@@ -45,6 +45,14 @@ const FAKE_STATE = {
   config: { refresh_seconds: 120, intended_hours: 2, currency: "BRL", subscription_brl: 550 },
 };
 
+FAKE_STATE.config.chatgpt_subscription_brl = 555;
+FAKE_STATE.config.usd_brl = 5;
+FAKE_STATE.chatgpt = {
+ limits: [{id:'codex',snapshot_ts:new Date().toISOString(),primary:{used_percent:7,window_minutes:10080,resets_at:new Date(Date.now()+86400e3).toISOString()}}],
+ history: Object.fromEntries(['dia','semana','mes','geral'].map(k=>[k,{total_tokens:1e6,equivalent_usd:20,unpriced_tokens:10}])),
+ burn_by_model:{'gpt-6-astra':1e6},
+};
+
 const FAKE_TOTAL = { total_tokens: 15.52e9, total_cost: 8392.75, total_turns: 58908 };
 
 let configPosts = [];
@@ -130,8 +138,8 @@ function makeFrameReader(onMessage) {
 
 // ---------------------------------------------------------------- teste
 
-const KEY_ACTIONS = ["auto", "dualwin", "source", "eta", "switch", "costday", "balance", "burn", "window"];
-const DIAL_ACTIONS = ["dialhorizon", "dialwindows", "dialcosts", "diallife"];
+const KEY_ACTIONS = ["claude5","claude7","codexquota","sparkquota","claudeburn","codexburn","clauderoi","codexroi","auto", "dualwin", "source", "eta", "switch", "costday", "balance", "burn", "window"];
+const DIAL_ACTIONS = ["aiwindows","aiburn","aicosts","aitotals","dialhorizon", "dialwindows", "dialcosts", "diallife"];
 
 const received = { setImage: new Map(), setFeedback: new Map(), showOk: 0 };
 let pluginSocket = null;
@@ -176,6 +184,9 @@ function finish() {
   const imgBal = decodeURIComponent(received.setImage.get("ctx-balance") || "");
   assert(imgBal.includes("1,5x") || imgBal.includes("x"), "tecla balanco calculou alavancagem");
 
+  assert(decodeURIComponent(received.setImage.get('ctx-codexquota') || '').includes('7%'), 'Codex key uses own quota');
+  assert(decodeURIComponent(received.setImage.get('ctx-codexroi') || '').includes('0.18x'), 'Codex ROI uses R$555 and exchange rate');
+  assert((received.setFeedback.get('ctx-aiburn') || {}).title?.includes('CODEX'), 'new burn dial rotated to Codex');
   child.kill();
   panel.close();
   wss.close();
@@ -209,6 +220,7 @@ const wss = net.createServer((socket) => {
         sendToPlugin({ event: "dialRotate", action: `${NS}.dialhorizon`, context: "ctx-dialhorizon", payload: { ticks: 1 } });
         sendToPlugin({ event: "dialRotate", action: `${NS}.dialcosts`, context: "ctx-dialcosts", payload: { ticks: 1 } });
         sendToPlugin({ event: "touchTap", action: `${NS}.dialwindows`, context: "ctx-dialwindows", payload: {} });
+        sendToPlugin({event:'dialRotate',action:`${NS}.aiburn`,context:'ctx-aiburn',payload:{ticks:1}});
       }, 1500);
       setTimeout(finish, 3500);
     }

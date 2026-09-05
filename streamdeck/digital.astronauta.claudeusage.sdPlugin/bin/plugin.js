@@ -18,6 +18,7 @@ const http = require("http");
 const { spawn } = require("child_process");
 const { MiniWebSocket } = require("./ws");
 const R = require("./render");
+const U = require("./unified");
 
 // ---------------------------------------------------------------- argumentos
 
@@ -61,6 +62,11 @@ const ACTION_PRESETS = {
   [`${NS}.dialcosts`]: { dial: "costs" },
   [`${NS}.diallife`]: { dial: "life" },
 };
+
+const AI_KEYS = ['claude5','claude7','codexquota','sparkquota','claudeburn','codexburn','clauderoi','codexroi'];
+const AI_DIALS = ['aiwindows','aiburn','aicosts','aitotals'];
+for (const metric of AI_KEYS) ACTION_PRESETS[`${NS}.${metric}`] = {metric,mode:'auto'};
+for (const dial of AI_DIALS) ACTION_PRESETS[`${NS}.${dial}`] = {dial};
 
 // ---------------------------------------------------------------- config
 
@@ -429,6 +435,7 @@ function dualView() {
 
 /** Traduz `metric` na view. */
 function buildView(metric) {
+  if (AI_KEYS.includes(metric)) return U.view(latest, metric, cfg().percent === "remaining");
   switch (metric) {
     case "auto":
       return windowView(worstWindowKey());
@@ -487,6 +494,12 @@ function dialFeedback(context) {
   const kind = dialKind(context);
   const entry = contexts.get(context) || {};
   const s = entry.settings || {};
+
+  if (AI_DIALS.includes(kind)) {
+    const items = U.dialItems(latest, kind, cfg().percent === "remaining");
+    const v = items[wrapIdx(s.aiIndex || 0, items.length || 1)] || {label:'IA',value:'--',level:'offline'};
+    return {title:`${v.label} · ${v.sub || ''}`,value:String(v.value),indicator:{value:Math.max(0,Math.min(100,v.pct || 0)),bar_fill_c:v.level==='safe' ? v.accent || R.colorForLevel(v.level) : R.colorForLevel(v.level)}};
+  }
 
   if (kind === "windows") {
     const key = s.windowKey && windowsAvailable().includes(s.windowKey)
@@ -757,6 +770,7 @@ function cycleIndex(context, ticks, key, len) {
 
 function onRotate(context, ticks) {
   const kind = dialKind(context);
+  if (AI_DIALS.includes(kind)) return cycleIndex(context, ticks, "aiIndex", Math.max(1,U.dialItems(latest,kind).length));
   if (kind === "horizon") return cycleHorizon(context, ticks);
   if (kind === "costs") return cycleIndex(context, ticks, "scopeIdx", COST_SCOPES.length);
   if (kind === "life") return cycleIndex(context, ticks, "fieldIdx", LIFE_FIELDS.length);

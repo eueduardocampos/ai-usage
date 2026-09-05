@@ -1,11 +1,11 @@
 {
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
-  "Name": "Claude Usage",
+  "Name": "AI Usage · Claude + Codex",
   "UUID": "digital.astronauta.claudeusage",
-  "Version": "3.0.0.0",
+  "Version": "4.0.0.0",
   "Author": "Eduardo Campos / Astronauta",
-  "Description": "Consumo do Claude Code no Stream Deck: janelas de uso, fonte dos tokens (licenca vs extras), custo, balanco da licenca e recomendacao de modelo. Requer o painel claude-usage rodando em localhost.",
-  "Category": "Claude Usage",
+  "Description": "Cotas, tokens por hora e retorno estimado das assinaturas Claude e ChatGPT/Codex. Le somente o painel local.",
+  "Category": "AI Usage",
   "CategoryIcon": "imgs/category",
   "Icon": "imgs/icon",
   "URL": "https://github.com/eueduardocampos/claude-usage",
@@ -18,18 +18,255 @@
     "MinimumVersion": "6.5"
   },
   "OS": [
-    { "Platform": "windows", "MinimumVersion": "10" },
-    { "Platform": "mac", "MinimumVersion": "12" }
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    }
   ],
   "Actions": [
+    {
+      "Name": "Claude · Sessão 5h",
+      "UUID": "digital.astronauta.claudeusage.claude5",
+      "Icon": "imgs/a-auto",
+      "Tooltip": "Claude · Sessão 5h · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Claude · Semana 7d",
+      "UUID": "digital.astronauta.claudeusage.claude7",
+      "Icon": "imgs/a-auto",
+      "Tooltip": "Claude · Semana 7d · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Codex · Cota principal",
+      "UUID": "digital.astronauta.claudeusage.codexquota",
+      "Icon": "imgs/a-auto",
+      "Tooltip": "Codex · Cota principal · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Spark · Cota",
+      "UUID": "digital.astronauta.claudeusage.sparkquota",
+      "Icon": "imgs/a-auto",
+      "Tooltip": "Spark · Cota · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Claude · Tokens/h",
+      "UUID": "digital.astronauta.claudeusage.claudeburn",
+      "Icon": "imgs/a-burn",
+      "Tooltip": "Claude · Tokens/h · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Codex · Tokens/h",
+      "UUID": "digital.astronauta.claudeusage.codexburn",
+      "Icon": "imgs/a-burn",
+      "Tooltip": "Codex · Tokens/h · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Claude · Retorno mensal",
+      "UUID": "digital.astronauta.claudeusage.clauderoi",
+      "Icon": "imgs/a-balance",
+      "Tooltip": "Claude · Retorno mensal · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Codex · Retorno mensal",
+      "UUID": "digital.astronauta.claudeusage.codexroi",
+      "Icon": "imgs/a-balance",
+      "Tooltip": "Codex · Retorno mensal · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Dial · Cotas Claude + Codex",
+      "UUID": "digital.astronauta.claudeusage.aiwindows",
+      "Icon": "imgs/a-windows",
+      "Tooltip": "Dial · Cotas Claude + Codex · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Alternar métricas das plataformas",
+          "Push": "Abrir painel",
+          "Touch": "Atualizar leitura local"
+        }
+      }
+    },
+    {
+      "Name": "Dial · Ritmo por modelo",
+      "UUID": "digital.astronauta.claudeusage.aiburn",
+      "Icon": "imgs/a-burn",
+      "Tooltip": "Dial · Ritmo por modelo · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Alternar métricas das plataformas",
+          "Push": "Abrir painel",
+          "Touch": "Atualizar leitura local"
+        }
+      }
+    },
+    {
+      "Name": "Dial · Equivalência por período",
+      "UUID": "digital.astronauta.claudeusage.aicosts",
+      "Icon": "imgs/a-costs",
+      "Tooltip": "Dial · Equivalência por período · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Alternar métricas das plataformas",
+          "Push": "Abrir painel",
+          "Touch": "Atualizar leitura local"
+        }
+      }
+    },
+    {
+      "Name": "Dial · Totais e retorno",
+      "UUID": "digital.astronauta.claudeusage.aitotals",
+      "Icon": "imgs/a-life",
+      "Tooltip": "Dial · Totais e retorno · consulta o painel local; pressione para abrir.",
+      "PropertyInspectorPath": "ui/global.html",
+      "Controllers": [
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Alternar métricas das plataformas",
+          "Push": "Abrir painel",
+          "Touch": "Atualizar leitura local"
+        }
+      }
+    },
     {
       "Name": "Janela crítica",
       "UUID": "digital.astronauta.claudeusage.auto",
       "Icon": "imgs/a-auto",
       "Tooltip": "A janela de uso com menos folga no momento (5h ou 7d). Pressione para abrir o painel.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Sessão 5h + Semana 7d",
@@ -37,8 +274,15 @@
       "Icon": "imgs/a-dual",
       "Tooltip": "As duas janelas empilhadas na mesma tecla, com barra e tempo pro reset.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Fonte dos tokens",
@@ -46,8 +290,15 @@
       "Icon": "imgs/a-source",
       "Tooltip": "LICENCA (verde) ou EXTRAS (vermelho) — se o que voce roda agora esta sendo cobrado a parte.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Estouro",
@@ -55,8 +306,15 @@
       "Icon": "imgs/a-eta",
       "Tooltip": "OK, ou a hora em que a janela estoura (so quando o estouro cai antes do reset).",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Trocar de modelo?",
@@ -64,8 +322,15 @@
       "Icon": "imgs/a-switch",
       "Tooltip": "Veredito de troca: da pra usar Opus agora ou vai estourar antes do reset?",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Custo hoje",
@@ -73,8 +338,15 @@
       "Icon": "imgs/a-cost",
       "Tooltip": "Custo estimado do dia em R$ (preco de tabela da API).",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Balanço do mês",
@@ -82,8 +354,15 @@
       "Icon": "imgs/a-balance",
       "Tooltip": "Alavancagem da licenca: consumo equivalente dividido pelo que voce paga (licenca + extras).",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Queima agora",
@@ -91,8 +370,15 @@
       "Icon": "imgs/a-burn",
       "Tooltip": "Tokens/h do modelo dominante — vira R$/h vermelho quando esta queimando creditos extras.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     },
     {
       "Name": "Dial · Horizonte",
@@ -100,7 +386,9 @@
       "Icon": "imgs/a-horizon",
       "Tooltip": "Gire para ajustar o 'pretendo trabalhar mais' (30m a 4h) — o veredito recalcula na hora.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Encoder"],
+      "Controllers": [
+        "Encoder"
+      ],
       "Encoder": {
         "layout": "$B1",
         "TriggerDescription": {
@@ -109,7 +397,11 @@
           "Touch": "Atualizar agora"
         }
       },
-      "States": [{ "Image": "imgs/key" }]
+      "States": [
+        {
+          "Image": "imgs/key"
+        }
+      ]
     },
     {
       "Name": "Dial · Janelas",
@@ -117,7 +409,9 @@
       "Icon": "imgs/a-windows",
       "Tooltip": "Gire para alternar 5h / 7d. Valor = usado, barra = projetado.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Encoder"],
+      "Controllers": [
+        "Encoder"
+      ],
       "Encoder": {
         "layout": "$B1",
         "TriggerDescription": {
@@ -126,7 +420,11 @@
           "Touch": "Atualizar agora"
         }
       },
-      "States": [{ "Image": "imgs/key" }]
+      "States": [
+        {
+          "Image": "imgs/key"
+        }
+      ]
     },
     {
       "Name": "Dial · Custos",
@@ -134,7 +432,9 @@
       "Icon": "imgs/a-costs",
       "Tooltip": "Gire para alternar hoje / semana / mes / extras.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Encoder"],
+      "Controllers": [
+        "Encoder"
+      ],
       "Encoder": {
         "layout": "$B1",
         "TriggerDescription": {
@@ -143,7 +443,11 @@
           "Touch": "Atualizar agora"
         }
       },
-      "States": [{ "Image": "imgs/key" }]
+      "States": [
+        {
+          "Image": "imgs/key"
+        }
+      ]
     },
     {
       "Name": "Dial · Vida toda",
@@ -151,7 +455,9 @@
       "Icon": "imgs/a-life",
       "Tooltip": "Gire para alternar tokens totais / custo total / interacoes.",
       "PropertyInspectorPath": "ui/global.html",
-      "Controllers": ["Encoder"],
+      "Controllers": [
+        "Encoder"
+      ],
       "Encoder": {
         "layout": "$B1",
         "TriggerDescription": {
@@ -160,7 +466,11 @@
           "Touch": "Atualizar agora"
         }
       },
-      "States": [{ "Image": "imgs/key" }]
+      "States": [
+        {
+          "Image": "imgs/key"
+        }
+      ]
     },
     {
       "Name": "Consumo (configurável)",
@@ -168,7 +478,10 @@
       "Icon": "imgs/action",
       "Tooltip": "Acao generica: escolha a metrica no inspector. Mantida por compatibilidade com perfis antigos.",
       "PropertyInspectorPath": "ui/window.html",
-      "Controllers": ["Keypad", "Encoder"],
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
       "Encoder": {
         "layout": "$B1",
         "TriggerDescription": {
@@ -177,7 +490,12 @@
           "Touch": "Abrir o painel"
         }
       },
-      "States": [{ "Image": "imgs/key", "TitleAlignment": "bottom" }]
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
     }
   ]
 }

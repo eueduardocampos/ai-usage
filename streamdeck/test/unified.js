@@ -1,0 +1,16 @@
+const assert=require('assert/strict');
+const U=require('../digital.astronauta.claudeusage.sdPlugin/bin/unified');
+const now=new Date().toISOString();
+const s={auth_connected:false,windows:{},config:{usd_brl:5,chatgpt_subscription_brl:555},chatgpt:{limits:[{id:'codex',snapshot_ts:now,primary:{used_percent:7,window_minutes:10080,resets_at:new Date(Date.now()+86400000).toISOString()},secondary:null}],history:{mes:{equivalent_usd:20,unpriced_tokens:1000,total_tokens:1e6}},burn_by_model:{'gpt-6-astra':1e6}}};
+assert.equal(U.windows(s).length,1,'no invented 5-hour Codex window');
+assert.equal(U.view(s,'codexquota').value,'7%','Claude auth failure does not disconnect Codex');
+assert.equal(U.view(s,'codexquota',true).value,'93%');
+assert.equal(U.view(s,'sparkquota').value,'--');
+assert.equal(U.view(s,'codexroi').value,'0.18x');
+assert.match(U.view(s,'codexroi').sub,/parcial/);
+s.chatgpt.limits[0].snapshot_ts='2020-01-01';
+assert.equal(U.view(s,'codexquota').value,'7%!');
+assert.equal(U.view(null,'codexquota').value,'OFF');
+assert.equal(U.view({...s,config:{}},'codexroi').value,'--');
+assert.equal(U.dialItems(s,'aiburn')[1].value,'1.0M');
+console.log('UNIFIED PASSED: account isolation, missing windows, stale data, price coverage, polarity');

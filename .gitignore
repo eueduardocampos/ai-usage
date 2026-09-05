@@ -27,3 +27,5 @@ manter-painel-online.ps1
 
 # Pacote do plugin de Stream Deck e gerado no CI
 *.streamDeckPlugin
+
+.streamdeck-backups/
