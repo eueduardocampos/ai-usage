@@ -65,6 +65,12 @@ pub fn run() {
     tauri::Builder::default()
         .manage(engine::Engine::default())
         .invoke_handler(tauri::generate_handler![engine::start_engine])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
@@ -109,9 +115,10 @@ pub fn run() {
                 false,
                 None::<&str>,
             )?;
+            let widget_i = MenuItem::with_id(app, "widget", "Widget flutuante", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit_i = MenuItem::with_id(app, "quit", "Sair", true, Some("Cmd+Q"))?;
-            let menu = Menu::with_items(app, &[&toggle_i, &on_top_i, &sep, &quit_i])?;
+            let menu = Menu::with_items(app, &[&toggle_i, &widget_i, &on_top_i, &sep, &quit_i])?;
 
             let on_top_handle = on_top_i.clone();
             let _tray = TrayIconBuilder::with_id("main-tray")
@@ -122,6 +129,18 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "toggle" => toggle_main(app),
+                    "widget" => {
+                        if let Some(w) = app.get_webview_window("widget") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(app, "widget", tauri::WebviewUrl::External(
+                                "http://localhost:8090/widget?layout=horizontal&native=1".parse().unwrap()))
+                                .title("Consumo de IA · widget")
+                                .inner_size(504.0, 268.0).min_inner_size(380.0, 190.0)
+                                .transparent(true).decorations(false).always_on_top(true).build();
+                        }
+                    },
                     "on_top" => {
                         let next = on_top_handle.is_checked().unwrap_or(true);
                         if let Some(w) = app.get_webview_window("main") {

@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "widget"
   ],
   "remote": {
     "urls": [
@@ -21,7 +22,11 @@
     "opener:default",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "http://localhost:*" }]
+      "allow": [
+        {
+          "url": "http://localhost:*"
+        }
+      ]
     }
   ]
 }

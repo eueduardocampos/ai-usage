@@ -9,7 +9,7 @@ import tempfile
 import time
 import urllib.request
 root=Path(__file__).resolve().parents[2]
-exe=root/'desktop/src-tauri/engine/ai-usage-engine'/('ai-usage-engine.exe' if os.name=='nt' else 'ai-usage-engine')
+exe=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else root/'desktop/src-tauri/engine/ai-usage-engine'/('ai-usage-engine.exe' if os.name=='nt' else 'ai-usage-engine')
 with socket.socket() as sock:
     sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
 with tempfile.TemporaryDirectory() as temp:

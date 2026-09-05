@@ -61,6 +61,8 @@ jobs:
       - name: Gerar instaladores
         working-directory: desktop
         run: npx --yes @tauri-apps/cli@2 build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Testar motor dentro do aplicativo instalado
+        run: python desktop/packaging/check_bundle.py ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.target }}
