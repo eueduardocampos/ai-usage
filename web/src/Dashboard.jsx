@@ -131,9 +131,57 @@ const options = {
     }
   }
 };
+const REPO = 'https://github.com/eueduardocampos/claude-usage';
+const STATUS_COLOR = { SEGURO: '#34c759', ATENCAO: '#ff9f0a', RISCO: '#ff453a', INDETERMINADO: '#8e8e93' };
+const STATUS_LABEL = { SEGURO: 'Seguro', ATENCAO: 'Atenção', RISCO: 'Risco', INDETERMINADO: 'Sem dados' };
+
+// Estados que antes nao tinham tela nenhuma: conta desconectada, rate limit,
+// erro do backend, painel offline, Codex ausente. Um banner so', acima das
+// janelas, com a acao certa embutida.
+function StatusBanner({ state, offline, onReconnect, reconnecting }) {
+  const items = [];
+  if (offline) items.push({ tone: 'warn', text: 'Sem conexão com o painel local: os números abaixo são o último estado conhecido e não estão sendo atualizados.' });
+  if (state.auth_connected === false) {
+    items.push({ tone: 'warn', text: 'Conta Claude desconectada: as janelas de cota não estão sendo lidas.', action: onReconnect, actionLabel: reconnecting ? 'Abrindo o login…' : 'Reconectar Claude' });
+  } else if (state.rate_limited) {
+    items.push({ tone: 'info', text: `A conta atingiu o limite de consultas da API da Anthropic. Mostrando o último snapshot; nova leitura em ${state.retry_in}s.` });
+  } else if (state.last_error) {
+    items.push({ tone: 'warn', text: state.last_error, detail: state.last_error_detail });
+  }
+  const cg = state.chatgpt;
+  if (cg && cg.available === false) items.push({ tone: 'info', text: 'Codex não encontrado nesta máquina: a coluna verde fica vazia até haver sessões do Codex.' });
+  else if (cg?.limits_error) items.push({ tone: 'info', text: `Codex: ${cg.limits_error}`, detail: cg.limits_error_detail });
+  if (!items.length) return null;
+  return <section className="u-banner" aria-live="polite">{items.map((it, i) => <div key={i} className="u-banner-item" data-tone={it.tone}><span>{it.text}</span>{it.action && <button onClick={it.action} disabled={reconnecting}>{it.actionLabel}</button>}{it.detail && <details><summary>detalhe técnico</summary><code>{it.detail}</code></details>}</div>)}</section>;
+}
+
+// O veredito ("posso trocar de modelo?") e' a informacao mais acionavel do
+// sistema: sobe pro topo, com semaforo e com as horas pretendidas rotuladas.
+function Verdict({ sw, intended, onHours, saving }) {
+  if (!sw) return null;
+  const color = STATUS_COLOR[sw.verdict] || STATUS_COLOR.INDETERMINADO;
+  return <section className="u-verdict" style={{ '--status': color }} aria-label="Veredito de troca de modelo">
+    <div className="u-heading"><h2>Posso trocar de modelo?</h2><small>{sw.dominant_model ? `Dominante agora: ${sw.dominant_model}` : 'Sem ritmo recente'}{sw.target_label ? ` · alvo: ${sw.target_label}` : ''}</small></div>
+    <div className="u-verdict-body"><span className="u-verdict-pill">{STATUS_LABEL[sw.verdict] || sw.verdict}</span><p>{sw.message}</p></div>
+    <div className="u-verdict-hours"><small>Pretendo trabalhar mais</small><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={intended === h} onClick={() => onHours(h)} disabled={saving}>{h}h</button>)}</div><small>{sw.factor_estimated ? 'intensidade do alvo estimada' : `intensidade ${sw.factor}× do modelo dominante`}</small></div>
+  </section>;
+}
+
+function SystemLinks() {
+  return <section className="u-panel u-system"><div className="u-heading"><h2>Este sistema</h2><small>O painel é uma das superfícies do AI Usage; todas leem o mesmo backend local</small></div><div className="u-links">
+    <a href="/widget" target="_blank" rel="noreferrer">Widget flutuante (janela leve) ↗</a>
+    <a href={`${REPO}/releases`} target="_blank" rel="noreferrer">App de mesa · Mac, Windows e Linux ↗</a>
+    <a href={`${REPO}/tree/main/native-mac`} target="_blank" rel="noreferrer">App nativo macOS · barra de menu ↗</a>
+    <a href={`${REPO}/tree/main/streamdeck`} target="_blank" rel="noreferrer">Stream Deck · teclas e dials ↗</a>
+    <a href={REPO} target="_blank" rel="noreferrer">Código e documentação ↗</a>
+  </div></section>;
+}
+
 function Settings({
   state,
-  onSave
+  onSave,
+  onReconnect,
+  reconnecting
 }) {
   const [message, setMessage] = useState('');
   return <details className="u-settings"><summary>Assinaturas, conexões e metodologia</summary><form onSubmit={async e => {
@@ -156,7 +204,7 @@ function Settings({
       } catch {
         setMessage('Não foi possível salvar. Tente novamente.');
       }
-    }}><div className="u-settings-grid">{[['subscription_brl', 'Claude · mensalidade'], ['chatgpt_subscription_brl', 'ChatGPT · mensalidade'], ['chatgpt_extra_brl', 'ChatGPT · extras pagos neste mês']].map(([key, label]) => <label key={key}>{label}<input name={key} inputMode="decimal" defaultValue={state.config[key] ?? ''} placeholder="R$ · informe o valor" /></label>)}<button>Salvar valores</button></div><p role="status">{message}</p></form><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a><button onClick={() => api.authStart()}>Reconectar Claude</button></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></details>;
+    }}><div className="u-settings-grid">{[['subscription_brl', 'Claude · mensalidade'], ['chatgpt_subscription_brl', 'ChatGPT · mensalidade'], ['chatgpt_extra_brl', 'ChatGPT · extras pagos neste mês']].map(([key, label]) => <label key={key}>{label}<input name={key} inputMode="decimal" defaultValue={state.config[key] ?? ''} placeholder="R$ · informe o valor" /></label>)}<button>Salvar valores</button></div><p role="status">{message}</p></form><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a><button type="button" onClick={onReconnect} disabled={reconnecting}>{reconnecting ? 'Abrindo o login…' : 'Reconectar Claude'}</button></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></details>;
 }
 export default function Dashboard() {
   const [state, setState] = useState(null),
@@ -165,7 +213,13 @@ export default function Dashboard() {
     [error, setError] = useState('');
   const [scope, setScope] = useState('mes'),
     [provider, setProvider] = useState('both'),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [saving, setSaving] = useState(false),
+    [reconnecting, setReconnecting] = useState(false),
+    // aviso com prazo (motivo do "Atualizar" negado, login aberto...): vive
+    // ate `until`, e o polling de 10s NAO o apaga — so' `error` (conexao) e'
+    // zerado a cada leitura boa
+    [notice, setNotice] = useState(null);
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -203,18 +257,39 @@ export default function Dashboard() {
       const r = await api.refresh();
       setState(await api.state());
       setHistory(await api.history());
-      setError(r?.ok === false ? `Próxima consulta em ${r.retry_in}s` : '');
+      if (r?.ok === false) {
+        const why = r.reason === 'rate_limited' ? 'A conta está no limite de consultas da API' : 'Consulta manual muito recente';
+        setNotice({ text: why, until: Date.now() + (r.retry_in || 0) * 1000 });
+      } else setNotice(null);
     } catch {
-      setError('Falha ao atualizar; último estado preservado.');
+      setNotice({ text: 'Falha ao atualizar; último estado preservado.', until: Date.now() + 15000 });
     } finally {
       setBusy(false);
     }
   }
-  async function save(values) {
-    await api.setConfig(values);
-    setState(await api.state());
+  async function reconnect() {
+    setReconnecting(true);
+    try {
+      await api.authStart();
+      setNotice({ text: 'Login aberto no navegador: conclua por lá, o painel atualiza sozinho', until: Date.now() + 90000 });
+    } catch {
+      setNotice({ text: 'Não foi possível iniciar a reconexão', until: Date.now() + 15000 });
+    } finally {
+      setReconnecting(false);
+    }
   }
-  if (!state) return <main className="u-root"><div className="u-wrap"><h1>Seu consumo de IA</h1><p role="status">{error || 'Carregando um retrato completo das duas plataformas…'}</p></div></main>;
+  async function save(values) {
+    setSaving(true);
+    try {
+      await api.setConfig(values);
+      setState(await api.state());
+    } finally {
+      setSaving(false);
+    }
+  }
+  const noticeText = notice && notice.until > now
+    ? `${notice.text}${notice.until - now > 2000 ? ` · ${Math.ceil((notice.until - now) / 1000)}s` : ''}` : '';
+  if (!state) return <main className="u-root"><div className="u-wrap"><h1>AI Usage</h1><p role="status">{error ? 'Sem conexão com o painel local (localhost:8090). Confira se o backend está rodando.' : 'Carregando um retrato completo das duas plataformas…'}</p></div></main>;
   const cg = state.chatgpt || {},
     fx = state.config.usd_brl;
   const ca = state.history?.[scope] || {},
@@ -287,16 +362,18 @@ export default function Dashboard() {
   const activeQuotas = allQuotas.filter(l => l.value !== 0 || !l.ts || now - new Date(l.ts) > 900000);
   const idleQuotas = allQuotas.filter(l => l.value === 0 && l.ts && now - new Date(l.ts) <= 900000);
   return <div className="u-root"><main className="u-wrap">
-    <header className="u-top"><div><span className="u-eyebrow"><img src="/brand.svg" alt="AI Usage" width="24" height="24" style={{ display: "inline-block", verticalAlign: "middle", marginRight: 8 }} />AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
+    <header className="u-top"><div><span className="u-eyebrow"><img src="/brand.svg" alt="AI Usage" width="24" height="24" style={{ display: "inline-block", verticalAlign: "middle", marginRight: 8 }} />AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{noticeText || error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
+    <StatusBanner state={state} offline={!!error} onReconnect={reconnect} reconnecting={reconnecting} />
     <section className="u-current-windows" aria-label="Consumo atual das janelas">
       <div className="u-heading"><h2>Janelas em uso</h2><small>Claude em laranja · Codex em verde</small></div>
       <div className="u-quota-strip">{activeQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div>
       {!activeQuotas.length && <p>Nenhuma janela com consumo no último snapshot.</p>}
       <div className="u-window-details">
         {idleQuotas.length > 0 && <details><summary>{idleQuotas.length} janelas sem consumo · {idleQuotas.map(l => l.label.replace('GPT-5.3-Codex-', '')).join(' / ')}</summary><div className="u-quota-strip">{idleQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div></details>}
-        <details><summary>Detalhes da conta e orientação Claude</summary><p>Codex: {cg.limits_error ? 'consulta com falha; exibindo último snapshot' : 'janelas retornadas pela conta'}. Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`}. Chat comum, imagens e voz não incluídos.</p><div className="u-tabs">{[.5, 1, 2, 3, 4].map(h => <button key={h} aria-pressed={state.config.intended_hours === h} onClick={() => save({intended_hours:h})}>+{h}h</button>)}</div><p>{state.switch?.message || 'Consulte as cotas ao escolher o próximo modelo.'}</p></details>
+        <details><summary>Detalhes da conta Codex</summary><p>Codex: {cg.limits_error ? 'consulta com falha; exibindo último snapshot' : 'janelas retornadas pela conta'}. Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`}. Chat comum, imagens e voz não incluídos.</p></details>
       </div>
     </section>
+    <Verdict sw={state.switch} intended={state.config.intended_hours} onHours={h => save({ intended_hours: h })} saving={saving} />
     <div className="u-grid u-overview">
       <Panel title="Tokens processados" note="Registros locais · histórico completo" className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
       <Panel title="Investimento mensal" note="Assinaturas informadas"><div className="u-medium">{money(fixed)}</div><p>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</p><p className="u-hint">Extras são contabilizados separadamente.</p></Panel>
@@ -376,6 +453,7 @@ export default function Dashboard() {
               pointRadius: 2
             })) : [])]
           }} /></div></Panel>
-    <Settings state={state} onSave={save} /><footer className="u-footer">Dados locais · {cg.ignored_imported_sessions || 0} sessões importadas separadas · câmbio {money(fx)}/US$ · cotas oficiais, valores de API estimados</footer>
+    <SystemLinks />
+    <Settings state={state} onSave={save} onReconnect={reconnect} reconnecting={reconnecting} /><footer className="u-footer">Dados locais · {cg.ignored_imported_sessions || 0} sessões importadas separadas · câmbio {money(fx)}/US$ · cotas oficiais, valores de API estimados</footer>
   </main></div>;
 }

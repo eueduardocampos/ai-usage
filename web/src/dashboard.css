@@ -471,3 +471,29 @@
 }
 
 .u-quota-strip .u-quota[data-stale="true"] .u-tag { display: inline; color: #ffbd72; }
+
+/* Banner de estado (conta desconectada, rate limit, erro, offline) */
+.u-banner { display: grid; gap: 8px; margin-bottom: 18px; }
+.u-banner-item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  background: #141c27; border: 1px solid #ffffff12; border-left: 3px solid var(--tone);
+  border-radius: 12px; padding: 12px 16px; font-size: 13px; color: #e9edf4; }
+.u-banner-item[data-tone="warn"] { --tone: #ff9f0a; }
+.u-banner-item[data-tone="info"] { --tone: #6aa2ff; }
+.u-banner-item span { flex: 1; min-width: 220px; }
+.u-banner-item details { font-size: 11px; color: #9bacc0; width: 100%; }
+.u-banner-item code { font-family: ui-monospace, monospace; font-size: 11px; color: #9bacc0; }
+
+/* Veredito de troca de modelo: a decisao mais acionavel do painel */
+.u-verdict { background: #141c27; border: 1px solid #ffffff0c; border-top: 2px solid var(--status);
+  border-radius: 15px; padding: 20px 22px; margin-bottom: 20px; }
+.u-verdict-body { display: flex; align-items: center; gap: 14px; margin: 10px 0 4px; }
+.u-verdict-body p { font-size: 15px; color: #e9edf4; margin: 0; }
+.u-verdict-pill { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--status); border: 1px solid var(--status); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+.u-verdict-hours { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.u-verdict-hours .u-tabs { margin-bottom: 0; }
+.u-verdict-hours .u-tabs button { min-height: 32px; }
+
+/* Bloco "Este sistema": as outras superficies do AI Usage */
+.u-system .u-links { margin: 14px 0 0; gap: 14px; }
+.u-system .u-links a { font-size: 13px; }
