@@ -50,6 +50,32 @@ st = forecast.smart_project_window(None, None, 168, [])
 check(st["status"] == "INDETERMINADO" and st["utilization"] is None and st["projected"] is None,
       "utilization None -> INDETERMINADO")
 
+# veredito de troca: alvo real, janela propria do alvo, mensagens com acento
+ws = {
+    "five_hour": {"utilization": 10.0, "rate": 1.0, "hours_to_reset": 4.0},
+    "seven_day": {"utilization": 20.0, "rate": 0.5, "hours_to_reset": 30.0},
+    "seven_day_model:fable": {"utilization": 5.0, "rate": 0.2, "hours_to_reset": 30.0},
+}
+v = forecast.switch_verdict(ws, "claude-sonnet-5", 2.0, target="opus")
+check(set(v["windows"]) == {"five_hour", "seven_day"}, "alvo Opus: nao avalia a janela do Fable")
+check(v["target_label"] == "Opus" and "Opus" in v["message"], f"rotulo do alvo: {v['message']}")
+v = forecast.switch_verdict(ws, "claude-sonnet-5", 2.0, candidates={"opus", "fable-5-1", "sonnet-5"})
+check(v["target"] == "fable-5-1" and v["target_label"] == "Fable",
+      f"sem alvo fixo: prefere quem tem teto proprio ({v['target']})")
+check("seven_day_model:fable" in v["windows"], "janela propria do Fable entra no veredito")
+check(v["message"] == "Pode trocar para Fable com folga." and v["factor_estimated"] is False,
+      f"mensagem acentuada: {v['message']}")
+check(abs(v["factor"] - 50.0 / 10.0) < 1e-9, f"fator = peso(fable)/peso(sonnet-5) = 5 ({v['factor']})")
+v = forecast.switch_verdict(ws, "claude-sonnet-5", 2.0, candidates=set())
+check(v["target"] == "opus", "sem candidatos: alvo Opus")
+v = forecast.switch_verdict(ws, "claude-sonnet-5", 2.0, target="modelo-x")
+check(v["factor_estimated"] is True, "alvo sem preco: fator estimado (peso do Opus)")
+risky = {"five_hour": {"utilization": 90.0, "rate": 5.0, "hours_to_reset": 4.0}}
+v = forecast.switch_verdict(risky, "claude-sonnet-5", 2.0, target="opus")
+check(v["verdict"] == "RISCO" and v["message"].startswith("Não troque para Opus"),
+      f"RISCO: {v['message']}")
+check("NAO" not in v["message"] and " pra " not in v["message"], "sem 'NAO'/'pra'")
+
 # enum do semaforo intocado (Stream Deck e Swift comparam essas strings)
 check(forecast.classify(0) == "SEGURO" and forecast.classify(85) == "ATENCAO"
       and forecast.classify(100) == "RISCO" and forecast.classify(None) == "INDETERMINADO",

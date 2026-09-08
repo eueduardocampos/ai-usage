@@ -22,6 +22,7 @@ import codex_usage
 import forecast
 import store as store_mod
 import usage_api
+import errors
 import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,7 +42,8 @@ class Ctx:
     codex = None
     cfg = None
     token_store = None
-    last_error = None
+    last_error = None         # frase pra UI (errors.humanize)
+    last_error_detail = None  # 'Tipo: mensagem original', so' pra depuracao
     last_poll = None
     auth_connected = False
     _login_thread = None
@@ -260,9 +262,11 @@ def build_state() -> dict:
     burn = Ctx.store.recent_tokph(2)
     burn_src = Ctx.store.recent_burn_by_source(2)
     dominant = max(burn, key=burn.get) if burn else None
-    verdict = (forecast.switch_verdict(states, dominant,
-                                       cfg.get("intended_hours", 2.0))
-               if windows_out else None)
+    verdict = (forecast.switch_verdict(
+        states, dominant, cfg.get("intended_hours", 2.0),
+        target=cfg.get("switch_target"),
+        candidates={k for k in (forecast._model_key(m) for m in burn) if k})
+        if windows_out else None)
 
     extra = None
     if latest and latest.get("extra_usage"):
@@ -337,6 +341,7 @@ def build_state() -> dict:
         "rate_limited": Ctx.rate_limited,
         "retry_in": max(0, int(Ctx.next_poll_at - time.time())) if Ctx.rate_limited else 0,
         "last_error": Ctx.last_error,
+        "last_error_detail": Ctx.last_error_detail,
         "windows": windows_out,
         "quotas": quotas,
         "switch": verdict,
@@ -461,6 +466,7 @@ def poll_once(log=print):
             Ctx.rate_limited = False
             Ctx.rate_limit_hits = 0
             Ctx.last_error = None
+            Ctx.last_error_detail = None
             Ctx.last_poll = time.time()
             Ctx.boot_retries = 0
             Ctx.next_poll_at = time.time() + _poll_interval()
@@ -469,24 +475,28 @@ def poll_once(log=print):
             espera = _schedule_backoff(e.retry_after)
             Ctx.rate_limited = True
             Ctx.last_error = (
-                f"limite de requisicoes da conta; nova tentativa em {int(espera)}s")
+                f"Limite de requisições da conta; nova tentativa em {int(espera)}s.")
+            Ctx.last_error_detail = f"RateLimited: retry_after={e.retry_after}"
             log(f"[poll] 429 ({Ctx.rate_limit_hits}x), aguardando {int(espera)}s")
         except auth.TransientAuthError as e:
             espera = _schedule_backoff()
             Ctx.rate_limited = True
-            Ctx.last_error = f"renovacao adiada ({e}); nova tentativa em {int(espera)}s"
+            Ctx.last_error = f"Renovação do token adiada; nova tentativa em {int(espera)}s."
+            Ctx.last_error_detail = f"TransientAuthError: {e}"
             log(f"[poll] falha transitoria ao renovar: {e}")
         except auth.AuthError as e:
             Ctx.auth_connected = False
             Ctx.rate_limited = False
-            Ctx.last_error = f"auth: {e}"
+            Ctx.last_error = "Conta desconectada: é preciso reconectar."
+            Ctx.last_error_detail = f"AuthError: {e}"
             Ctx.next_poll_at = time.time() + _retry_after_falha()
             log(f"[poll] sem token valido: {e}")
         except Exception as e:
             # rede/servidor: nao mexe em auth_connected, so tenta mais tarde
-            Ctx.last_error = str(e)
-            Ctx.next_poll_at = time.time() + _retry_after_falha()
-            log(f"[poll] erro: {e}")
+            espera = _retry_after_falha()
+            Ctx.last_error, Ctx.last_error_detail = errors.humanize(e, retry_in=espera)
+            Ctx.next_poll_at = time.time() + espera
+            log(f"[poll] erro: {Ctx.last_error_detail}")
     finally:
         _poll_lock.release()
 
@@ -522,7 +532,9 @@ def start_login_thread():
                                 callback_port=Ctx.cfg.get("callback_port", 54545))
             poll_once()
         except Exception as e:
-            Ctx.last_error = f"login: {e}"
+            msg, detail = errors.humanize(e)
+            Ctx.last_error = f"Falha ao reconectar a conta: {msg}"
+            Ctx.last_error_detail = f"login: {detail}"
     Ctx._login_thread = threading.Thread(target=_run, daemon=True)
     Ctx._login_thread.start()
 
@@ -564,7 +576,8 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         try:
             if p == "/api/health":
-                self._send(200, json.dumps({"app": "ai-usage", "protocol": 1}))
+                self._send(200, json.dumps({"app": "ai-usage", "protocol": 1,
+                                            "features": ["quotas", "brl", "label", "errors"]}))
             elif p == "/api/state":
                 self._send(200, json.dumps(build_state(), ensure_ascii=False))
             elif p == "/api/total":

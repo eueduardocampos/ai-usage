@@ -20,7 +20,7 @@ de intensidade (peso de preco do Opus / peso do modelo dominante atual).
 import datetime as dt
 from datetime import timezone
 
-from pricing import OUTPUT_WEIGHT, model_key as _model_key  # fonte unica (pricing.py)
+from pricing import DISPLAY_NAME, OUTPUT_WEIGHT, model_key as _model_key  # fonte unica (pricing.py)
 
 _ORDER = {"SEGURO": 0, "ATENCAO": 1, "RISCO": 2, "INDETERMINADO": 0}
 
@@ -108,36 +108,86 @@ def project_window(util, resets_at, window_hours, snap_rate=None, now=None):
     return out
 
 
-def switch_verdict(windows_state, dominant_model, intended_hours, target="opus"):
+MODEL_WINDOW_PREFIX = "seven_day_model:"
+
+
+def _family(key):
+    return (key or "").split("-", 1)[0]
+
+
+def _window_family(window_key):
+    # "seven_day_model:fable" -> "fable"; "seven_day_model:sonnet_4_6" -> "sonnet"
+    return window_key[len(MODEL_WINDOW_PREFIX):].split("_", 1)[0]
+
+
+def _weight(key):
+    return OUTPUT_WEIGHT.get(key) or OUTPUT_WEIGHT.get(_family(key))
+
+
+def switch_verdict(windows_state, dominant_model, intended_hours, target=None, candidates=None):
     """Estima o impacto de trabalhar `intended_hours` no modelo `target`
-    sobre as janelas que ele consome (5h e 7d geral)."""
+    sobre as janelas que ele consome: sessao (5h), semana geral (7d) e, se
+    existir, o teto semanal proprio do modelo alvo (seven_day_model:*).
+
+    `target`: chave de pricing (ex. "opus", "fable-5-1"). Se None, escolhe
+    entre `candidates` (modelos vistos no ritmo recente) o de outra familia
+    com teto proprio presente e maior peso; sem candidatos, "opus".
+    """
     cur_key = _model_key(dominant_model) or "sonnet"
-    factor = OUTPUT_WEIGHT.get(target, 25.0) / OUTPUT_WEIGHT.get(cur_key, 15.0)
+    cur_fam = _family(cur_key)
+    model_windows = [k for k in windows_state if k.startswith(MODEL_WINDOW_PREFIX)]
+
+    if not target:
+        cands = {c for c in (candidates or ()) if c and _family(c) != cur_fam}
+        if cands:
+            def score(c):
+                own = any(_window_family(k) == _family(c) for k in model_windows)
+                return (own, _weight(c) or 0.0, c)
+            target = max(cands, key=score)
+        else:
+            target = "opus"
+    t_fam = _family(target)
+
+    factor_estimated = False
+    w_t = _weight(target)
+    if w_t is None:
+        w_t, factor_estimated = OUTPUT_WEIGHT["opus"], True
+    w_c = _weight(cur_key) or OUTPUT_WEIGHT["sonnet"]
+    factor = w_t / w_c
+
+    keys = ["five_hour", "seven_day"] + [k for k in model_windows if _window_family(k) == t_fam]
+    general_rate = (windows_state.get("seven_day") or {}).get("rate") or 0.0
     results = {}
     worst = "SEGURO"
-    for win in ("five_hour", "seven_day"):
+    for win in keys:
         st = windows_state.get(win)
         if not st or st.get("utilization") is None:
             continue
-        rate = st.get("rate") or 0.0
         htr = st.get("hours_to_reset") or 0.0
         hrs = min(intended_hours, htr) if htr else intended_hours
-        proj = st["utilization"] + rate * factor * hrs
-        cls = classify(min(proj, 999.0))
-        results[win] = {"projected": min(proj, 999.0), "status": cls,
-                        "hours_to_reset": htr}
+        if win.startswith(MODEL_WINDOW_PREFIX):
+            # o teto proprio do alvo ja mede o consumo DO alvo: taxa propria
+            # quando ha; senao estima a partir do geral pelo fator
+            own_rate = st.get("rate")
+            proj = st["utilization"] + (own_rate if own_rate else general_rate * factor) * hrs
+        else:
+            proj = st["utilization"] + (st.get("rate") or 0.0) * factor * hrs
+        proj = min(proj, 999.0)
+        cls = classify(proj)
+        results[win] = {"projected": proj, "status": cls, "hours_to_reset": htr}
         if _ORDER[cls] > _ORDER[worst]:
             worst = cls
 
+    display = DISPLAY_NAME.get(target) or DISPLAY_NAME.get(t_fam) or target.title()
     msg = {
-        "SEGURO": f"Pode trocar pra {target.title()} com folga.",
-        "ATENCAO": f"Da pra trocar pra {target.title()}, mas acompanhe de perto.",
-        "RISCO": f"NAO troque pra {target.title()} agora: deve estourar o limite "
-                 f"antes do reset.",
+        "SEGURO": f"Pode trocar para {display} com folga.",
+        "ATENCAO": f"Dá para trocar para {display}, mas acompanhe de perto.",
+        "RISCO": f"Não troque para {display} agora: deve estourar o limite antes do reset.",
         "INDETERMINADO": "Ainda sem dados suficientes para decidir (colete algumas amostras).",
     }[worst]
     return {"verdict": worst, "message": msg, "factor": round(factor, 2),
-            "dominant_model": dominant_model, "target": target,
+            "factor_estimated": factor_estimated,
+            "dominant_model": dominant_model, "target": target, "target_label": display,
             "intended_hours": intended_hours, "windows": results}
 
 

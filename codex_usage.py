@@ -10,6 +10,7 @@ dessas sessoes no Codex continua sendo contado.
 import datetime as dt
 import glob
 import json
+import errors
 import os
 import threading
 import sqlite3
@@ -231,7 +232,12 @@ class CodexUsage:
                     db.execute("DELETE FROM codex_limits WHERE ts < ?", ((dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=90)).isoformat(),))
         except (OSError, ValueError, urllib.error.URLError) as exc:
             with self._lock:
-                self._api_error = str(exc)
+                if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError):
+                    # sessao do Codex ausente: a mensagem ja e' legivel
+                    self._api_error, self._api_error_detail = (
+                        "Sessão ChatGPT do Codex não encontrada nesta máquina.", f"ValueError: {exc}")
+                else:
+                    self._api_error, self._api_error_detail = errors.humanize(exc)
 
     @staticmethod
     def _scope_start(scope):
@@ -419,4 +425,5 @@ class CodexUsage:
                 "limits_source": "chatgpt" if self._direct_limits is not None else "logs",
                 "limits_refresh_seconds": LIMIT_REFRESH_SECONDS,
                 "limits_error": self._api_error,
+                "limits_error_detail": getattr(self, "_api_error_detail", None),
             }
