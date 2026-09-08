@@ -284,6 +284,20 @@ class CodexUsage:
         return out
 
     @staticmethod
+    def _hour_of_day(events):
+        """Media de tokens por hora-do-dia (local) — perfil para a projecao
+        ponderada, no mesmo formato de store.hour_of_day_avg()."""
+        tokens, days = {}, {}
+        for event in events:
+            when = _parse_iso(event.get("timestamp"))
+            if not when:
+                continue
+            local = when.astimezone()
+            tokens[local.hour] = tokens.get(local.hour, 0) + event["total_tokens"]
+            days.setdefault(local.hour, set()).add(local.date())
+        return [{"hour": h, "avg_tokens": tokens[h] / len(days[h])} for h in sorted(tokens)]
+
+    @staticmethod
     def _daily_series(events, days=30):
         totals = {}
         for event in events:
@@ -396,6 +410,7 @@ class CodexUsage:
                 "burn_by_model": {m["model"]: m["tokens"] / 2 for m in recent["by_model"]},
                 "pricing": {"verified_at": "2026-09-05", "basis": "standard text API; no tool fees or Fast premium", "models": API_PRICES},
                 "limit_history": self.limit_history(),
+                "hour_of_day": self._hour_of_day(events),
                 "daily": self._daily_series(events),
                 "heatmap": self._heatmap(events),
                 "native_sessions": len(native_sessions),

@@ -41,9 +41,11 @@ export default function Widget() {
     return () => { alive = false; clearInterval(poll); clearInterval(clock); };
   }, []);
   async function open() { try { await openDashboard(); } catch { setError('Não foi possível abrir o navegador.'); } }
-  const claude = Object.entries(state?.windows || {}).filter(([k]) => ['five_hour', 'seven_day'].includes(k)).map(([k,w]) => ({ label: k === 'five_hour' ? '5 horas' : '7 dias', value: w.utilization, reset: w.resets_at, ts: state.snapshot_ts }));
-  const codex = state?.chatgpt?.limits?.find(l => l.id === 'codex');
-  const cw = ['primary', 'secondary'].filter(k => codex?.[k]).map(k => ({ label: codex[k].window_minutes === 10080 ? '7 dias' : `${codex[k].window_minutes / 60} horas`, value: codex[k].used_percent, reset: codex[k].resets_at, ts: codex.snapshot_ts }));
+  // quotas[]: contrato unico do backend (rotulo, projecao e semaforo prontos),
+  // inclui a janela semanal por modelo do Claude e as 3 medicoes do Codex.
+  const toRow = q => ({ label: q.label, value: q.utilization, reset: q.resets_at, ts: q.snapshot_ts });
+  const claude = (state?.quotas || []).filter(q => q.provider === 'claude').map(toRow);
+  const cw = (state?.quotas || []).filter(q => q.provider === 'codex').map(toRow);
   const burnA = Object.values(state?.burn_tokph || {}).reduce((a,b) => a+b,0), burnB = state?.chatgpt?.burn_tokph || 0;
   const extras = state?.extra_usage?.burning;
   const fresh = state && now - new Date(state.generated_at) < 30000 && !error;

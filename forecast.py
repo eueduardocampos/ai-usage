@@ -27,6 +27,8 @@ _ORDER = {"SEGURO": 0, "ATENCAO": 1, "RISCO": 2, "INDETERMINADO": 0}
 
 def _model_key(model: str):
     m = (model or "").lower()
+    if "fable" in m:
+        return "fable"
     if "opus" in m:
         return "opus"
     if "sonnet" in m:
@@ -46,6 +48,31 @@ def parse_iso(s):
     if d.tzinfo is None:
         d = d.replace(tzinfo=timezone.utc)
     return d
+
+
+def series_rate(points, min_span_h=0.5):
+    """%/hora medido por amostragem numa serie [(ts_iso, valor)], do mais antigo
+    ao mais novo. Uma queda de valor e' reset de janela: so' o trecho depois da
+    ultima queda conta. Devolve None se o trecho cobre menos de `min_span_h`
+    horas (ruido de janela curta extrapola valores absurdos). Aceita ts no
+    formato ".000Z" (snapshots do Claude) e ISO com offset (Codex)."""
+    pts = []
+    for ts, v in points or []:
+        t = parse_iso(ts)
+        if t is not None and v is not None:
+            pts.append((t, float(v)))
+    if len(pts) < 2:
+        return None
+    i = len(pts) - 1
+    while i > 0 and pts[i - 1][1] <= pts[i][1]:
+        i -= 1
+    seg = pts[i:]
+    if len(seg) < 2:
+        return None
+    span_h = (seg[-1][0] - seg[0][0]).total_seconds() / 3600
+    if span_h < min_span_h:
+        return None
+    return max(0.0, (seg[-1][1] - seg[0][1]) / span_h)
 
 
 def classify(projected):

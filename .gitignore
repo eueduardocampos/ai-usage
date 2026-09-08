@@ -32,3 +32,6 @@ manter-painel-online.ps1
 
 # Backend empacotado por plataforma
 desktop/src-tauri/engine/
+
+# Build do app nativo macOS (Swift Package)
+native-mac/.build/

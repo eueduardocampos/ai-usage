@@ -11,11 +11,6 @@ const ORANGE = '#ef985d',
 const money = v => v == null ? '—' : fmtMoney(v, 'BRL');
 const pct = v => v == null ? '—' : `${v.toFixed(1)}%`;
 const scopes = [['dia', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês'], ['geral', 'Histórico']];
-const names = {
-  five_hour: 'Sessão · 5 horas',
-  seven_day: 'Semana · 7 dias',
-  seven_day_sonnet: 'Sonnet · 7 dias'
-};
 function resetText(value, now) {
   const h = (new Date(value).getTime() - now) / 3600000;
   return !Number.isFinite(h) ? 'sem previsão' : h <= 0 ? 'aguardando reset' : h >= 24 ? `${Math.floor(h / 24)}d ${Math.floor(h % 24)}h` : `${Math.floor(h)}h ${Math.floor(h % 1 * 60)}m`;
@@ -275,15 +270,17 @@ export default function Dashboard() {
   const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
   const extrasA = state.extra_usage?.used;
   const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
-  const allQuotas = [
-    ...Object.entries(state.windows || {}).map(([k, w]) => ({
-      key: `claude-${k}`, label: `Claude · ${names[k] || k}`, value: w.utilization,
-      reset: w.resets_at, ts: state.snapshot_ts, color: ORANGE,
-      trend: w.projected != null && w.rate != null && now - new Date(state.snapshot_ts) < 900000
-        ? { projected: w.projected, rate: w.rate } : null,
-    })),
-    ...limits.map(l => ({ ...l, color: GREEN, trend: quotaTrend(rows, l.key, l, now) })),
-  ];
+  // quotas[] e' o contrato unico do backend: Claude e Codex na mesma forma,
+  // com rotulo, projecao e semaforo prontos (inclui a janela semanal por
+  // modelo, ex. "Fable · 7 dias", que nao existe em state.windows).
+  const allQuotas = (state.quotas || []).map(q => ({
+    key: q.key,
+    label: q.provider === 'claude' ? `Claude · ${q.label}` : q.label,
+    value: q.utilization, reset: q.resets_at, ts: q.snapshot_ts,
+    color: q.provider === 'claude' ? ORANGE : GREEN, status: q.status,
+    trend: q.projected != null && q.rate != null && q.snapshot_ts && now - new Date(q.snapshot_ts) < 900000
+      ? { projected: q.projected, rate: q.rate } : null,
+  }));
   const activeQuotas = allQuotas.filter(l => l.value !== 0 || !l.ts || now - new Date(l.ts) > 900000);
   const idleQuotas = allQuotas.filter(l => l.value === 0 && l.ts && now - new Date(l.ts) <= 900000);
   return <div className="u-root"><main className="u-wrap">
@@ -356,9 +353,9 @@ export default function Dashboard() {
               }
             }
           }} data={{
-            datasets: [...(showA ? Object.keys(state.windows || {}).map((key, index) => ({
-              label: `Claude · ${names[key] || key}`,
-              data: (history?.snapshots || []).filter(r => r.window === key).map(r => ({
+            datasets: [...(showA ? (state.quotas || []).filter(q => q.provider === 'claude').map((q, index) => ({
+              label: `Claude · ${q.label}`,
+              data: (history?.snapshots || []).filter(r => r.window === q.source_key).map(r => ({
                 x: new Date(r.ts).getTime(),
                 y: r.utilization
               })),

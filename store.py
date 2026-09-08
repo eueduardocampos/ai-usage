@@ -114,6 +114,10 @@ class Store:
             c.execute("ALTER TABLE turns ADD COLUMN source TEXT DEFAULT 'code'")
         if "cost" not in cols:
             c.execute("ALTER TABLE turns ADD COLUMN cost REAL")
+        # migracao: rotulo da janela vindo do servidor (janelas por modelo)
+        snap_cols = {r[1] for r in c.execute("PRAGMA table_info(api_snapshots)")}
+        if "label" not in snap_cols:
+            c.execute("ALTER TABLE api_snapshots ADD COLUMN label TEXT")
         c.commit()
 
     # --- scan dos logs -------------------------------------------------------
@@ -401,10 +405,11 @@ class Store:
         cur = self.conn.cursor()
         for win, data in (normalized.get("windows") or {}).items():
             cur.execute("""INSERT INTO api_snapshots
-                (ts, window, utilization, resets_at, used_credits, monthly_limit, currency)
-                VALUES (?,?,?,?,?,?,?)""",
+                (ts, window, utilization, resets_at, used_credits, monthly_limit, currency, label)
+                VALUES (?,?,?,?,?,?,?,?)""",
                 (ts, win, data.get("utilization"), data.get("resets_at"),
-                 eu.get("used_credits"), eu.get("monthly_limit"), eu.get("currency")))
+                 eu.get("used_credits"), eu.get("monthly_limit"), eu.get("currency"),
+                 data.get("label")))
         self.conn.commit()
 
     @_locked
@@ -432,35 +437,34 @@ class Store:
         windows, extra = {}, None
         for r in rows:
             windows[r["window"]] = {"utilization": r["utilization"],
-                                    "resets_at": r["resets_at"]}
+                                    "resets_at": r["resets_at"],
+                                    "label": r["label"]}
             if extra is None:
                 extra = {"used_credits": r["used_credits"],
                          "monthly_limit": r["monthly_limit"],
                          "currency": r["currency"]}
         return {"ts": ts, "windows": windows, "extra_usage": extra}
 
-    @_locked
-    def snapshot_rate(self, window: str, min_span_h: float = 0.5,
-                      lookback: int = 60):
-        """%/hora medido por amostragem. So retorna se as amostras cobrirem
-        pelo menos `min_span_h` horas (senao o ruido de janelas curtas
-        extrapola valores absurdos). Usa o maior span disponivel para suavizar."""
+    def _series(self, window: str, lookback: int):
         cur = self.conn.cursor()
         rows = cur.execute("""SELECT ts, utilization FROM api_snapshots
             WHERE window = ? AND utilization IS NOT NULL
             ORDER BY ts DESC LIMIT ?""", (window, lookback)).fetchall()
-        if len(rows) < 2:
-            return None
-        newest = rows[0]
-        t1 = dt.datetime.strptime(newest["ts"], "%Y-%m-%dT%H:%M:%S.000Z")
-        # pega a amostra mais antiga (maior span) dentro do lookback
-        oldest = rows[-1]
-        t0 = dt.datetime.strptime(oldest["ts"], "%Y-%m-%dT%H:%M:%S.000Z")
-        hours = (t1 - t0).total_seconds() / 3600
-        if hours < min_span_h:
-            return None  # span curto demais: deixa o fallback (media da janela) decidir
-        rate = (newest["utilization"] - oldest["utilization"]) / hours
-        return rate if rate >= 0 else None  # queda = reset de janela, ignora
+        return [(r["ts"], r["utilization"]) for r in reversed(rows)]
+
+    @_locked
+    def snapshot_series(self, window: str, lookback: int = 60):
+        """Serie [(ts, utilization)] da janela, do mais antigo ao mais novo."""
+        return self._series(window, lookback)
+
+    @_locked
+    def snapshot_rate(self, window: str, min_span_h: float = 0.5,
+                      lookback: int = 60):
+        """%/hora medido por amostragem (ver forecast.series_rate): so retorna
+        se as amostras cobrirem pelo menos `min_span_h` horas, e uma queda de
+        valor (reset de janela) corta o trecho anterior."""
+        from forecast import series_rate
+        return series_rate(self._series(window, lookback), min_span_h)
 
     @_locked
     def heatmap_data(self):
