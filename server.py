@@ -96,6 +96,33 @@ def refresh_fx(log=print):
 
 # --- montagem do estado ------------------------------------------------------
 
+def fx_rate():
+    """Cotacao USD->BRL em vigor: fixa no config.json (`usd_brl`) ou a
+    automatica. UNICO ponto de conversao do backend — o resto so' consome."""
+    return Ctx.cfg.get("usd_brl") or Ctx.fx_rate
+
+
+def _brl(usd, fx):
+    return None if usd is None or not fx else usd * fx
+
+
+def _with_brl(summary: dict, fx) -> dict:
+    """Acrescenta *_brl a um resumo de custo (que continua em USD): a UI nunca
+    deve multiplicar por cambio por conta propria. Sem cotacao, vem null."""
+    if not summary:
+        return summary
+    out = dict(summary)
+    for k in ("total_cost", "cost_per_hour"):
+        if k in out:
+            out[k + "_brl"] = _brl(out.get(k), fx)
+    if isinstance(out.get("by_model"), list):
+        out["by_model"] = [dict(m, cost_brl=_brl(m.get("cost"), fx)) for m in out["by_model"]]
+    if isinstance(out.get("by_source"), dict):
+        out["by_source"] = {s: dict(d, cost_brl=_brl(d.get("cost"), fx))
+                            for s, d in out["by_source"].items()}
+    return out
+
+
 def _claude_states(latest, hourly_profile) -> dict:
     """Projecao + semaforo de TODAS as janelas do ultimo snapshot, inclusive
     as por modelo (seven_day_model:*) e as sem dado (viram INDETERMINADO em
@@ -219,6 +246,7 @@ def _quotas(claude_states, codex_states, snapshot_ts) -> list:
 
 def build_state() -> dict:
     cfg = Ctx.cfg
+    fx = fx_rate()
     latest = Ctx.store.latest_state()
     hourly_profile = Ctx.store.hour_of_day_avg()
     states = _claude_states(latest, hourly_profile)
@@ -243,8 +271,15 @@ def build_state() -> dict:
         extra = {
             "used": (eu["used_credits"] / div) if eu.get("used_credits") is not None else None,
             "limit": (eu["monthly_limit"] / div) if eu.get("monthly_limit") is not None else None,
-            "currency": eu.get("currency") or cfg.get("currency"),
+            # Moeda dos creditos = a que a API informa (a conta pode ser
+            # cobrada em BRL ou USD). Sem informacao, assume USD — nunca a
+            # moeda de EXIBICAO do painel (cfg["currency"]), que foi o que
+            # fazia o painel somar dolar com real.
+            "currency": eu.get("currency") or "USD",
         }
+        to_brl = (lambda v: v) if extra["currency"] == "BRL" else (lambda v: _brl(v, fx))
+        extra["used_brl"] = to_brl(extra["used"])
+        extra["limit_brl"] = to_brl(extra["limit"])
         # licenca x extras: mede pelo historico de used_credits dos snapshots
         try:
             series = Ctx.store.extra_credit_series(24)
@@ -273,9 +308,11 @@ def build_state() -> dict:
                     burning = True
                     break
         extra.update({"rate_per_hour": rate, "spent_24h": spent_24h,
+                      "rate_per_hour_brl": to_brl(rate),
+                      "spent_24h_brl": to_brl(spent_24h),
                       "burning": burning})
 
-    history = {sc: Ctx.store.scope_summary(sc)
+    history = {sc: _with_brl(Ctx.store.scope_summary(sc), fx)
                for sc in ("geral", "mes", "semana", "dia")}
 
     semrush = {
@@ -315,7 +352,7 @@ def build_state() -> dict:
         "config": {"refresh_seconds": _poll_interval(),
                    "intended_hours": cfg.get("intended_hours"),
                    "currency": cfg.get("currency"),
-                   "usd_brl": cfg.get("usd_brl") or Ctx.fx_rate,
+                   "usd_brl": fx,
                    "subscription_brl": cfg.get("subscription_brl"),
                    "chatgpt_subscription_brl": cfg.get("chatgpt_subscription_brl"),
                    "chatgpt_extra_brl": cfg.get("chatgpt_extra_brl") if cfg.get("chatgpt_extra_month") == dt.datetime.now().strftime("%Y-%m") else None},
@@ -531,13 +568,17 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/api/state":
                 self._send(200, json.dumps(build_state(), ensure_ascii=False))
             elif p == "/api/total":
-                self._send(200, json.dumps(Ctx.store.total_summary(), ensure_ascii=False))
+                self._send(200, json.dumps(_with_brl(Ctx.store.total_summary(), fx_rate()),
+                                           ensure_ascii=False))
             elif p == "/api/history":
+                fx = fx_rate()
                 out = {
                     "snapshots": Ctx.store.snapshot_history(48),
-                    "daily": Ctx.store.daily_series(Ctx.cfg.get("daily_days", 30)),
+                    "daily": [dict(d, cost_brl=_brl(d.get("cost"), fx))
+                              for d in Ctx.store.daily_series(Ctx.cfg.get("daily_days", 30))],
                     "hour_of_day": Ctx.store.hour_of_day_avg(),
-                    "heatmap": Ctx.store.heatmap_data(),
+                    "heatmap": [dict(c, avg_cost_brl=_brl(c.get("avg_cost"), fx))
+                                for c in Ctx.store.heatmap_data()],
                 }
                 self._send(200, json.dumps(out, ensure_ascii=False))
             elif p == "/auth/start":

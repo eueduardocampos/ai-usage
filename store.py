@@ -32,30 +32,9 @@ PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
 # bancos do Claude Science (um por org; hoje uma, amanha podem ser mais)
 SCIENCE_DB_GLOB = os.path.join(HOME, ".claude-science", "orgs", "*", "operon-cli.db")
 
-# Tabela de preco da API (USD por 1M tokens) — mesmo criterio do claude-usage.
-PRICING = {
-    "opus":   {"in": 5.00, "out": 25.00, "cr": 0.50, "cc": 6.25},
-    "sonnet": {"in": 3.00, "out": 15.00, "cr": 0.30, "cc": 3.75},
-    "haiku":  {"in": 1.00, "out":  5.00, "cr": 0.10, "cc": 1.25},
-}
-
-
-def model_key(model: str):
-    m = (model or "").lower()
-    if "opus" in m:
-        return "opus"
-    if "sonnet" in m:
-        return "sonnet"
-    if "haiku" in m:
-        return "haiku"
-    return None
-
-
-def row_cost(model, i, o, cr, cc) -> float:
-    p = PRICING.get(model_key(model))
-    if not p:
-        return 0.0
-    return (i * p["in"] + o * p["out"] + cr * p["cr"] + cc * p["cc"]) / 1_000_000
+# Tabela de preco e reconhecimento de modelo vivem em pricing.py (fonte
+# unica, compartilhada com forecast.py). Re-exportados aqui por compatibilidade.
+from pricing import PRICING, model_key, row_cost  # noqa: F401
 
 
 def group_cost(source, model, i, o, cr, cc, stored) -> float:

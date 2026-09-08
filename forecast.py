@@ -20,22 +20,9 @@ de intensidade (peso de preco do Opus / peso do modelo dominante atual).
 import datetime as dt
 from datetime import timezone
 
-# peso aproximado de "intensidade" por modelo (preco de output, USD/1M)
-OUTPUT_WEIGHT = {"opus": 25.0, "sonnet": 15.0, "haiku": 5.0}
+from pricing import OUTPUT_WEIGHT, model_key as _model_key  # fonte unica (pricing.py)
+
 _ORDER = {"SEGURO": 0, "ATENCAO": 1, "RISCO": 2, "INDETERMINADO": 0}
-
-
-def _model_key(model: str):
-    m = (model or "").lower()
-    if "fable" in m:
-        return "fable"
-    if "opus" in m:
-        return "opus"
-    if "sonnet" in m:
-        return "sonnet"
-    if "haiku" in m:
-        return "haiku"
-    return None
 
 
 def parse_iso(s):

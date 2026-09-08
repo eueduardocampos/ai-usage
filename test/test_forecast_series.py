@@ -40,7 +40,7 @@ check(forecast.series_rate([]) is None and forecast.series_rate([(z(10), 1)]) is
 check(forecast.series_rate([(z(10), 10), (z(12), 10)]) == 0.0, "sem crescimento -> 0.0")
 
 # _model_key reconhece o Fable (antes caia em None -> 'sonnet' por fallback)
-check(forecast._model_key("claude-fable-5-1") == "fable", "claude-fable-5-1 -> fable")
+check(forecast._model_key("claude-fable-5-1") == "fable-5-1", "claude-fable-5-1 -> fable-5-1")
 check(forecast._model_key("claude-fable-5") == "fable", "claude-fable-5 -> fable")
 check(forecast._model_key("claude-opus-5") == "opus" and forecast._model_key("claude-sonnet-4-6") == "sonnet",
       "opus/sonnet inalterados")

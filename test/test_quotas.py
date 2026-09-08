@@ -32,8 +32,10 @@ class FakeStore:
     def recent_burn_by_source(self, hours): return {}
     def extra_credit_series(self, hours): return []
     def scope_summary(self, sc):
-        return {"scope": sc, "total_tokens": 0, "total_cost": 0.0, "total_turns": 0,
-                "by_model": [], "by_source": {}}
+        return {"scope": sc, "total_tokens": 0, "total_cost": 10.0, "cost_per_hour": 2.0,
+                "total_turns": 0,
+                "by_model": [{"model": "claude-fable-5-1", "tokens": 1, "cost": 4.0}],
+                "by_source": {"code": {"tokens": 1, "cost": 4.0, "turns": 1}}}
 
 class FakeCodex:
     def state(self):
@@ -101,6 +103,32 @@ check("window" in s["windows"]["five_hour"] and s["windows"]["five_hour"]["statu
 check(s["chatgpt"]["limits"][1]["secondary"]["used_percent"] == 40, "chatgpt.limits intocado")
 check(s["switch"] is not None and s["switch"]["verdict"] in ("SEGURO", "ATENCAO", "RISCO", "INDETERMINADO"),
       "switch continua sendo calculado")
+
+# moeda: creditos em USD, conversao num ponto so' (fx = 5.0)
+eu = s["extra_usage"]
+check(eu["currency"] == "USD", "extra_usage.currency = USD (a API nao manda; os creditos sao em dolar)")
+check(eu["limit"] == 20.0 and eu["limit_brl"] == 100.0, f"limit 20 USD -> 100 BRL ({eu['limit']}, {eu['limit_brl']})")
+check(eu["used_brl"] == 0.0, "used_brl presente")
+h = s["history"]["dia"]
+check(h["total_cost"] == 10.0 and h["total_cost_brl"] == 50.0, "history.total_cost continua USD; total_cost_brl convertido")
+check(h["cost_per_hour_brl"] == 10.0, "cost_per_hour_brl")
+check(h["by_model"][0]["cost"] == 4.0 and h["by_model"][0]["cost_brl"] == 20.0, "by_model[*].cost_brl")
+check(h["by_source"]["code"]["cost_brl"] == 20.0, "by_source[*].cost_brl")
+check(s["config"]["usd_brl"] == 5.0, "config.usd_brl vem do mesmo fx_rate()")
+# conta cobrada em BRL: a API informa a moeda e NAO se converte de novo
+server.Ctx.store.latest_state = (lambda orig=server.Ctx.store.latest_state: (lambda: dict(
+    orig(), extra_usage={"used_credits": 500, "monthly_limit": 2000, "currency": "BRL"})))()
+s_brl = server.build_state()
+check(s_brl["extra_usage"]["currency"] == "BRL" and s_brl["extra_usage"]["limit_brl"] == 20.0
+      and s_brl["extra_usage"]["used_brl"] == 5.0,
+      "creditos em BRL: limit_brl = limit (sem multiplicar pelo cambio)")
+server.Ctx.store = FakeStore()
+# sem cotacao: *_brl vem null, nunca 0
+server.Ctx.fx_rate = None
+s_nofx = server.build_state()
+check(s_nofx["history"]["dia"]["total_cost_brl"] is None and s_nofx["extra_usage"]["limit_brl"] is None,
+      "sem cotacao: *_brl = null (nao zero)")
+server.Ctx.fx_rate = 5.0
 
 # sem snapshot nenhum (conta recem-conectada): quotas so' com Codex, windows vazio
 server.Ctx.store.latest_state = lambda: None

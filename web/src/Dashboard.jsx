@@ -83,7 +83,10 @@ function Finance({
   openai,
   now
 }) {
-  const value = openai ? fx && summary ? summary.equivalent_usd * fx : null : summary?.total_cost;
+  // Claude: total_cost e' USD; o backend ja entrega total_cost_brl convertido
+  // num ponto so' (sem cotacao vem null, e a UI mostra "—" em vez de somar
+  // dolar com real). Codex: equivalent_usd * fx, mesmo cambio do backend.
+  const value = openai ? fx && summary ? summary.equivalent_usd * fx : null : summary?.total_cost_brl;
   const partial = openai && summary?.unpriced_tokens > 0;
   const totalPaid = fixed == null ? null : fixed + (extra ?? 0);
   const ratio = totalPaid > 0 && value != null ? value / totalPaid : null;
@@ -252,7 +255,7 @@ export default function Dashboard() {
     model: m.model,
     tokens: m.tokens,
     color: ORANGE,
-    cost: m.cost,
+    cost: m.cost_brl,
     provider: 'Claude'
   })), ...(oa.by_model || []).map(m => ({
     ...m,
@@ -265,10 +268,10 @@ export default function Dashboard() {
   const dates = [...new Set([...daily, ...od].map(d => d.day))].filter(d => new Date(d + 'T12:00:00').getTime() >= now - 30 * 86400000).sort().slice(-30);
   const showA = provider !== 'chatgpt',
     showB = provider !== 'claude';
-  const monthA = state.history?.mes?.total_cost,
+  const monthA = state.history?.mes?.total_cost_brl,
     monthB = fx && cg.history?.mes ? cg.history.mes.equivalent_usd * fx : null;
   const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
-  const extrasA = state.extra_usage?.used;
+  const extrasA = state.extra_usage?.used_brl; // creditos extras sao em USD; used_brl ja vem convertido
   const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
   // quotas[] e' o contrato unico do backend: Claude e Codex na mesma forma,
   // com rotulo, projecao e semaforo prontos (inclui a janela semanal por
@@ -306,7 +309,7 @@ export default function Dashboard() {
       <Panel title="Retorno das assinaturas" note="Mês atual · equivalência de API"><div className="u-finance-grid"><Finance label="Claude" color={ORANGE} summary={state.history?.mes} fixed={state.config.subscription_brl} extra={extrasA} fx={fx} now={now} /><Finance label="ChatGPT" color={GREEN} summary={cg.history?.mes} fixed={state.config.chatgpt_subscription_brl} extra={openaiExtra} fx={fx} now={now} openai /></div></Panel></div>
     <Panel title="Comparativo de consumo" note="Semana começa na segunda; cotas usam suas próprias janelas"><div className="u-tabs">{scopes.map(([id, label]) => <button key={id} aria-pressed={scope === id} onClick={() => setScope(id)}>{label}</button>)}</div><div className="u-table-wrap"><table><thead><tr><th>Plataforma</th><th>Tokens</th><th>Participação</th><th>Interações</th><th>Equivalente de API</th></tr></thead><tbody>{[['Claude', ca, ORANGE], ['ChatGPT / Codex', oa, GREEN]].map(([label, data, color], i) => <tr key={label}><td style={{
                   color
-                }}>● {label}</td><td>{fmtTokens(data.total_tokens)}</td><td>{pct(ca.total_tokens + oa.total_tokens ? data.total_tokens / (ca.total_tokens + oa.total_tokens) * 100 : 0)}</td><td>{fmtInt(data.calls ?? data.total_turns)}</td><td>{money(i ? fx ? data.equivalent_usd * fx : null : data.total_cost)}{i && data.unpriced_tokens > 0 ? ' · parcial' : ''}</td></tr>)}</tbody></table></div><div className="u-models">{modelRows.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span style={{
+                }}>● {label}</td><td>{fmtTokens(data.total_tokens)}</td><td>{pct(ca.total_tokens + oa.total_tokens ? data.total_tokens / (ca.total_tokens + oa.total_tokens) * 100 : 0)}</td><td>{fmtInt(data.calls ?? data.total_turns)}</td><td>{money(i ? fx ? data.equivalent_usd * fx : null : data.total_cost_brl)}{i && data.unpriced_tokens > 0 ? ' · parcial' : ''}</td></tr>)}</tbody></table></div><div className="u-models">{modelRows.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span style={{
                 color: r.color
               }}>● {r.model}</span><small>{fmtTokens(r.tokens)} · {money(r.cost)} {r.cost == null ? 'sem preço mapeado' : 'equivalente'}</small></div><Meter value={r.tokens / Math.max(1, ...modelRows.map(m => m.tokens)) * 100} color={r.color} /></div>)}</div><details><summary>Composição dos tokens do Codex</summary><p>Entrada sem cache: {fmtTokens((oa.input_tokens || 0) - (oa.cached_input_tokens || 0))} · cache lido: {fmtTokens(oa.cached_input_tokens)} · saída: {fmtTokens(oa.output_tokens)} · raciocínio dentro da saída: {fmtTokens(oa.reasoning_output_tokens)}.</p></details></Panel>
     <div className="u-heading u-section-title"><h2>Quando você usa cada plataforma</h2><div className="u-tabs">{[['both', 'Ambas'], ['claude', 'Claude'], ['chatgpt', 'ChatGPT']].map(([id, label]) => <button key={id} aria-pressed={provider === id} onClick={() => setProvider(id)}>{label}</button>)}</div></div>

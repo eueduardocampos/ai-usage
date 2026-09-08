@@ -73,7 +73,7 @@ export default function HeatmapChart({ heatmap = [], chatgpt = [], fx }) {
               <span style={{ color: '#45d6aa' }}>ChatGPT {fmtTokens(tooltip.openai)}</span>
             </div>
             <div className="mt-1 text-[10px]">{[...(tooltip.ca?.models || []), ...(tooltip.oa?.models || [])].join(' · ') || 'sem atividade'}</div>
-            <div className="text-[10px]">Equivalente médio: Claude {tooltip.ca?.avg_cost?.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) || '—'} · ChatGPT {fx && tooltip.oa ? (tooltip.oa.avg_cost_usd * fx).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) : '—'}{tooltip.oa?.partial ? ' (parcial)' : ''}</div>
+            <div className="text-[10px]">Equivalente médio: Claude {tooltip.ca?.avg_cost_brl?.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) || '—'} · ChatGPT {fx && tooltip.oa ? (tooltip.oa.avg_cost_usd * fx).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}) : '—'}{tooltip.oa?.partial ? ' (parcial)' : ''}</div>
           </div>
         </div>
       )}
