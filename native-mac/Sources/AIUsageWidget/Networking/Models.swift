@@ -13,6 +13,16 @@ struct AppState: Decodable {
     let extraUsage: ExtraUsage?
     let chatgpt: ChatGPTState?
     let `switch`: SwitchVerdict?
+    let update: UpdateInfo?
+}
+
+/// Aviso de versão nova: o backend consulta as releases uma vez (cache de 6h)
+/// e todas as superfícies leem daqui, em vez de cada uma bater no GitHub.
+struct UpdateInfo: Decodable {
+    let current: String
+    let latest: String?
+    let url: String
+    let available: Bool
 }
 
 /// Um item de `quotas[]`: contrato único do backend para Claude e Codex,

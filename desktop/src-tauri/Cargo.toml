@@ -1,6 +1,6 @@
 [package]
 name = "claude-usage-desktop"
-version = "3.0.0"
+version = "4.2.0"
 description = "Painel de consumo Claude e Codex com backend integrado"
 authors = ["Eduardo Campos"]
 license = "MIT"

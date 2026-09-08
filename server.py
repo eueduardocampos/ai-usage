@@ -23,6 +23,7 @@ import forecast
 import store as store_mod
 import usage_api
 import errors
+import updates
 import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -353,6 +354,7 @@ def build_state() -> dict:
         "history": history,
         "chatgpt": chatgpt,
         "plan": plan,
+        "update": updates.state(),
         "semrush": semrush,
         "config": {"refresh_seconds": _poll_interval(),
                    "intended_hours": cfg.get("intended_hours"),
@@ -448,6 +450,7 @@ def poll_once(log=print):
     try:
         refresh_fx(log)
         refresh_profile(log)
+        updates.check(log=log)
         try:
             Ctx.store.scan(log=lambda *a: None)
         except Exception as e:
@@ -577,7 +580,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/api/health":
                 self._send(200, json.dumps({"app": "ai-usage", "protocol": 1,
-                                            "features": ["quotas", "brl", "label", "errors"]}))
+                                            "version": updates.current_version(),
+                                            "features": ["quotas", "brl", "label", "errors", "update"]}))
             elif p == "/api/state":
                 self._send(200, json.dumps(build_state(), ensure_ascii=False))
             elif p == "/api/total":

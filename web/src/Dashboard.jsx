@@ -151,8 +151,12 @@ function StatusBanner({ state, offline, onReconnect, reconnecting }) {
   const cg = state.chatgpt;
   if (cg && cg.available === false) items.push({ tone: 'info', text: 'Codex não encontrado nesta máquina: a coluna verde fica vazia até haver sessões do Codex.' });
   else if (cg?.limits_error) items.push({ tone: 'info', text: `Codex: ${cg.limits_error}`, detail: cg.limits_error_detail });
+  if (state.update?.available) {
+    items.push({ tone: 'info', text: `AI Usage ${state.update.latest} disponível (você está na ${state.update.current}).`,
+      href: state.update.url, actionLabel: 'Ver a versão nova ↗' });
+  }
   if (!items.length) return null;
-  return <section className="u-banner" aria-live="polite">{items.map((it, i) => <div key={i} className="u-banner-item" data-tone={it.tone}><span>{it.text}</span>{it.action && <button onClick={it.action} disabled={reconnecting}>{it.actionLabel}</button>}{it.detail && <details><summary>detalhe técnico</summary><code>{it.detail}</code></details>}</div>)}</section>;
+  return <section className="u-banner" aria-live="polite">{items.map((it, i) => <div key={i} className="u-banner-item" data-tone={it.tone}><span>{it.text}</span>{it.action && <button onClick={it.action} disabled={reconnecting}>{it.actionLabel}</button>}{it.href && <a href={it.href} target="_blank" rel="noreferrer">{it.actionLabel}</a>}{it.detail && <details><summary>detalhe técnico</summary><code>{it.detail}</code></details>}</div>)}</section>;
 }
 
 // O veredito ("posso trocar de modelo?") e' a informacao mais acionavel do
@@ -167,8 +171,10 @@ function Verdict({ sw, intended, onHours, saving }) {
   </section>;
 }
 
-function SystemLinks() {
-  return <section className="u-panel u-system"><div className="u-heading"><h2>Este sistema</h2><small>O painel é uma das superfícies do AI Usage; todas leem o mesmo backend local</small></div><div className="u-links">
+function SystemLinks({ update }) {
+  return <section className="u-panel u-system"><div className="u-heading"><h2>Este sistema</h2><small>{update?.current ? `AI Usage ${update.current} · ` : ''}o painel é uma das superfícies; todas leem o mesmo backend local</small></div>
+    {update?.available && <p className="u-update">Versão {update.latest} disponível. <a href={update.url} target="_blank" rel="noreferrer">Ver o que mudou e baixar ↗</a></p>}
+    <div className="u-links">
     <a href="/widget" target="_blank" rel="noreferrer">Widget flutuante (janela leve) ↗</a>
     <a href={`${REPO}/releases`} target="_blank" rel="noreferrer">App de mesa · Mac, Windows e Linux ↗</a>
     <a href={`${REPO}/tree/main/native-mac`} target="_blank" rel="noreferrer">App nativo macOS · barra de menu ↗</a>
@@ -453,7 +459,7 @@ export default function Dashboard() {
               pointRadius: 2
             })) : [])]
           }} /></div></Panel>
-    <SystemLinks />
+    <SystemLinks update={state.update} />
     <Settings state={state} onSave={save} onReconnect={reconnect} reconnecting={reconnecting} /><footer className="u-footer">Dados locais · {cg.ignored_imported_sessions || 0} sessões importadas separadas · câmbio {money(fx)}/US$ · cotas oficiais, valores de API estimados</footer>
   </main></div>;
 }

@@ -497,3 +497,7 @@
 /* Bloco "Este sistema": as outras superficies do AI Usage */
 .u-system .u-links { margin: 14px 0 0; gap: 14px; }
 .u-system .u-links a { font-size: 13px; }
+
+.u-update { font-size: 13px; color: #e9edf4; margin: 12px 0 0; }
+.u-update a { color: #6aa2ff; }
+.u-banner-item a { color: #6aa2ff; font-size: 13px; white-space: nowrap; }

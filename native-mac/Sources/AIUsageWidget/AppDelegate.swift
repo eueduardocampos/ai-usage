@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var alwaysOnTopItem: NSMenuItem!
     private var statusMessageItem: NSMenuItem!
     private var refreshItem: NSMenuItem!
+    private var updateItem: NSMenuItem!
     private var preferencesWindow: NSWindow?
     private let store = AppStateStore()
     private let prefs = AppPreferences()
@@ -81,6 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        // Só aparece quando há versão nova (o backend consulta as releases).
+        updateItem = NSMenuItem(title: "", action: #selector(openRelease), keyEquivalent: "")
+        updateItem.target = self
+        updateItem.isHidden = true
+        menu.addItem(updateItem)
+
         let quitItem = NSMenuItem(title: "Sair", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -118,6 +125,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusMessageItem?.title = store.isOffline
             ? "Painel offline (localhost:8090)"
             : (store.switchMessage ?? store.lastUpdatedText)
+
+        if let update = store.state?.update, update.available, let latest = update.latest {
+            updateItem?.title = "Atualizar para a versão \(latest) ↗"
+            updateItem?.isHidden = false
+        } else {
+            updateItem?.isHidden = true
+        }
+    }
+
+    @objc private func openRelease() {
+        guard let raw = store.state?.update?.url, let url = URL(string: raw) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func setupPanel() {
