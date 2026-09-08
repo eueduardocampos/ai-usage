@@ -12,6 +12,7 @@ struct AppState: Decodable {
     let burnTokph: [String: Double]?
     let extraUsage: ExtraUsage?
     let chatgpt: ChatGPTState?
+    let `switch`: SwitchVerdict?
 }
 
 /// Um item de `quotas[]`: contrato único do backend para Claude e Codex,
@@ -36,4 +37,13 @@ struct ExtraUsage: Decodable {
 struct ChatGPTState: Decodable {
     let available: Bool
     let burnTokph: Double?
+    let limitsError: String?
+}
+
+/// `switch` do /api/state: "posso trocar de modelo?" -- a informação mais
+/// acionável do sistema, calculada por forecast.py.
+struct SwitchVerdict: Decodable {
+    let verdict: String
+    let message: String
+    let targetLabel: String?
 }
