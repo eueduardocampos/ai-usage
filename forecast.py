@@ -174,21 +174,148 @@ def switch_verdict(windows_state, dominant_model, intended_hours, target=None, c
             proj = st["utilization"] + (st.get("rate") or 0.0) * factor * hrs
         proj = min(proj, 999.0)
         cls = classify(proj)
-        results[win] = {"projected": proj, "status": cls, "hours_to_reset": htr}
+        results[win] = {"projected": proj, "status": cls, "hours_to_reset": htr,
+                        "utilization": st["utilization"]}
         if _ORDER[cls] > _ORDER[worst]:
             worst = cls
 
     display = DISPLAY_NAME.get(target) or DISPLAY_NAME.get(t_fam) or target.title()
-    msg = {
-        "SEGURO": f"Pode trocar para {display} com folga.",
-        "ATENCAO": f"Dá para trocar para {display}, mas acompanhe de perto.",
-        "RISCO": f"Não troque para {display} agora: deve estourar o limite antes do reset.",
-        "INDETERMINADO": "Ainda sem dados suficientes para decidir (colete algumas amostras).",
-    }[worst]
-    return {"verdict": worst, "message": msg, "factor": round(factor, 2),
-            "factor_estimated": factor_estimated,
+    tight = _tightest(results)
+    msg, msg_id = advice(worst, windows_state.get(tight) if tight else None,
+                         results.get(tight), _window_phrase(tight, windows_state))
+    return {"verdict": worst, "message": msg, "message_id": msg_id,
+            "tightest_window": tight,
+            "factor": round(factor, 2), "factor_estimated": factor_estimated,
             "dominant_model": dominant_model, "target": target, "target_label": display,
             "intended_hours": intended_hours, "windows": results}
+
+
+def _tightest(results):
+    """A janela que manda no veredito: pior status, desempate pela projecao."""
+    if not results:
+        return None
+    return max(results, key=lambda k: (_ORDER[results[k]["status"]],
+                                       results[k].get("projected") or 0.0))
+
+
+WINDOW_PHRASE = {
+    "five_hour": "a janela da sessão",
+    "seven_day": "a semana",
+    "seven_day_sonnet": "a semana do Sonnet",
+    "seven_day_opus": "a semana do Opus",
+}
+
+
+def _window_phrase(key, windows_state=None):
+    """Nome da janela dentro da frase ("a janela da sessão", "a semana do
+    Fable"). Sem chave conhecida, cai num generico que sempre cabe."""
+    if not key:
+        return "a janela"
+    if key in WINDOW_PHRASE:
+        return WINDOW_PHRASE[key]
+    if key.startswith(MODEL_WINDOW_PREFIX):
+        label = ((windows_state or {}).get(key) or {}).get("label")
+        nome = label or _window_family(key).title()
+        return f"a semana do {nome}"
+    return "a janela"
+
+
+def _contrai(prep, janela):
+    """"em" + "a janela da sessão" -> "na janela da sessão" (e "de" -> "da").
+    Todas as formas de WINDOW_PHRASE comecam com "a "."""
+    if janela.startswith("a "):
+        return {"em": "n", "de": "d"}[prep] + janela
+    return f"{prep} {janela}"
+
+
+def _maiuscula(texto):
+    # .capitalize() rebaixaria o resto ("a semana do Fable" -> "...do fable")
+    return texto[:1].upper() + texto[1:]
+
+
+def _pct(v):
+    return f"{v:.0f}%" if v is not None else "?"
+
+
+def _horas(h):
+    if h is None:
+        return "pouco tempo"
+    if h < 1:
+        return "menos de 1h"
+    if h < 24:
+        return f"{int(round(h))}h"
+    return f"{int(round(h / 24))} dias"
+
+
+def advice(verdict, current, switched, janela="a janela"):
+    """Escolhe a frase do veredito. Nao sorteia: cada frase so aparece quando
+    o que ela afirma e verdade.
+
+    `current`  = estado da janela no ritmo de agora (utilization, projected,
+                 hours_to_reset), usado pelas frases que dizem "no ritmo atual".
+    `switched` = a mesma janela projetada num modelo mais pesado, que e o que
+                 define o veredito.
+
+    As frases falam de "modelo mais pesado/leve" de proposito: qual modelo e o
+    padrao de cada um varia, entao nomear um so' assume um uso que pode nao ser
+    o de quem esta lendo.
+    """
+    cur = (current or {}).get("projected")
+    util = (current or {}).get("utilization")
+    htr = (current or {}).get("hours_to_reset")
+    if htr is None:
+        htr = (switched or {}).get("hours_to_reset")
+    sw = (switched or {}).get("projected")
+    janela_hrs = (current or {}).get("window_hours")
+    decorrido = (janela_hrs - htr) if (janela_hrs is not None and htr is not None) else None
+
+    if verdict == "SEGURO":
+        if cur is None:
+            return "Cota tranquila: a escolha do modelo não é o gargalo agora.", 3
+        if htr is not None and htr <= 2:
+            return "Você tem folga. Se quiser mais qualidade por resposta, é agora.", 4
+        if cur < 40:
+            return "A projeção fica bem abaixo do limite: modelo pesado é seguro nesta janela.", 5
+        if cur < 65:
+            return "Sobra margem até o reset: dá para usar um modelo mais pesado sem apertar a cota.", 1
+        return f"No ritmo atual a janela fecha em {_pct(cur)}. Cabe testar um modelo mais caro por token.", 2
+
+    if verdict == "ATENCAO":
+        if cur is None:
+            return "Ainda cabe, mas sem sobra: use o modelo pesado só onde ele muda o resultado.", 9
+        if sw is not None and sw >= 95:
+            return "A projeção fecha no limite: dá para subir de modelo, mas de olho no contador.", 6
+        if htr is not None and htr >= 12:
+            return "Margem curta. Um modelo mais pesado cabe em tarefa pontual, não no dia todo.", 7
+        if sw is not None and sw >= 88:
+            return "Está no limite do confortável. Se subir de modelo, diminua o volume.", 10
+        return f"No ritmo atual você chega a {_pct(cur)} no reset. Vale reservar o modelo caro para o que importa.", 8
+
+    if verdict == "RISCO":
+        if cur is None:
+            return f"Sem margem para modelo mais caro {_contrai('em', janela)}.", 13
+        # ja estourada ou perto do reset: o que resta e' esperar a virada
+        if (util is not None and util >= 100) or (htr is not None and htr <= 6):
+            return (f"{_maiuscula(janela)} comprometida: guarde o modelo pesado "
+                    f"para depois do reset, em {_horas(htr)}."), 15
+        if cur >= 100:
+            if htr is not None and htr >= 12:
+                return (f"Você chega ao teto {_contrai('de', janela)} antes do reset. "
+                        f"Ou reduz o ritmo, ou desce de modelo."), 14
+            return f"No ritmo atual, {janela} acaba antes do reset. Um modelo mais leve segura até lá.", 11
+        # o ritmo de agora aguenta; quem estoura e' a troca por um modelo pesado
+        return (f"A projeção passa de 100% {_contrai('em', janela)}: "
+                f"subir de modelo agora antecipa o bloqueio."), 12
+
+    if util is None:
+        return "Sem leitura suficiente por enquanto. O painel prefere não recomendar no escuro.", 20
+    if decorrido is not None and decorrido < 1:
+        return "A janela acabou de abrir: sem ritmo medido, qualquer projeção seria chute.", 19
+    if util > 0:
+        return f"Sem dados para recomendar modelo ainda. O consumo atual está em {_pct(util)}.", 18
+    if decorrido is not None and decorrido >= 1:
+        return "Coletando amostras: a projeção aparece após cerca de meia hora de uso registrado.", 17
+    return "Ainda sem histórico suficiente para projetar. Volte em alguns minutos.", 16
 
 
 def _build_weight_map(hourly_profile):
