@@ -1,16 +1,29 @@
-# Painel de Consumo de IA
+# AI Usage
 
 Um painel local que acompanha separadamente a assinatura Claude e a assinatura
-ChatGPT usada pelo Codex. No Claude, ele também mostra **se é seguro continuar /
-trocar de modelo agora** — ou se você corre o risco de bater o limite no meio de
-um projeto.
+ChatGPT usada pelo Codex. Além do quanto você já consumiu, ele mostra **onde o
+consumo vai chegar até o reset** se o ritmo continuar, e a partir disso responde
+se dá para usar um modelo mais pesado agora ou se é hora de segurar.
 
 ## Sobre
 
 Claude e Codex no mesmo painel: cotas em uso no topo, tokens separados por
 plataforma, ritmo por modelo e comparação do consumo com o custo das assinaturas.
-No Stream Deck +, o perfil **Consumo de IA** reúne oito teclas e quatro dials
-com números grandes, rótulos curtos e cores consistentes.
+
+### As superfícies
+
+Todas leem o mesmo backend local (`localhost:8090`); nenhuma consulta as contas
+por conta própria.
+
+| Superfície | O que é | Como abre |
+| --- | --- | --- |
+| **Backend + painel** | Coleta as cotas, guarda o histórico e serve a interface completa | `python3 main.py` → http://localhost:8090 |
+| **Widget** | Versão enxuta com as cotas e o ritmo, para deixar de canto | http://localhost:8090/widget |
+| **App de mesa** | Mac, Windows e Linux: o widget numa janela flutuante, com o motor embutido (não precisa de Python) | instalador da [página de releases](https://github.com/eueduardocampos/claude-usage/releases) |
+| **App nativo do macOS** | Item na barra de menu com os números em texto, mais o widget em três formatos | `native-mac/` (veja [App nativo do macOS](#app-nativo-do-macos)) |
+| **Stream Deck** | Oito teclas e quatro dials com cotas, ritmo e retorno | perfil + plugin em [`streamdeck/`](streamdeck/README.md) |
+
+O número da versão é o mesmo em todas elas (arquivo [`VERSION`](VERSION)).
 
 ![Painel unificado com cotas Claude e Codex, tokens e retorno das assinaturas](docs/painel.png)
 
@@ -32,8 +45,15 @@ Ele junta duas fontes:
    médias por hora (geral / mês / semana / dia), custo estimado e ritmo de
    consumo por modelo.
 2. **A API de uso da sua conta** (`/api/oauth/usage`) → % usada da **sessão (5h)**,
-   da **semana (7d)** e do bucket de **Sonnet (7d)**, horários de reset e créditos
-   de excedente.
+   da **semana (7d)**, dos **tetos semanais por modelo** quando a conta tem
+   (ex.: "Semanal · Fable"), horários de reset e créditos de excedente.
+
+As janelas por modelo chegam num formato diferente das outras (um array
+`limits[]`, com o nome do modelo vindo do servidor), então o painel lê o que
+vier em vez de trabalhar com uma lista fixa: quando a Anthropic acrescenta uma
+janela nova, ela aparece sozinha. O que a API manda e o painel não reconhece
+fica registrado no log, uma vez por inicialização, em vez de ser descartado em
+silêncio.
 
 Quando o Codex Desktop ou CLI está instalado, o painel também cria uma área
 integrada para a **assinatura ChatGPT usada pelo Codex**. Os tokens são lidos de
@@ -58,8 +78,9 @@ Sessões importadas do Claude para o Codex são reconhecidas por
 contabilizado no Claude; se a conversa for retomada no Codex, apenas as novas
 chamadas OpenAI entram na área ChatGPT.
 
-Com isso, mostra um **semáforo por janela** e um **veredito direto**: *"dá pra
-trocar pra Opus agora ou vou estourar antes de terminar?"*.
+Com isso, mostra um **semáforo por janela** e um **conselho direto** sobre a
+situação: se sobra margem para usar um modelo mais pesado agora, ou se o ritmo
+atual já não chega até o reset.
 
 > ⚠️ **Projeto não-oficial.** Não tem relação com a Anthropic, a OpenAI ou a Elgato. Ele lê um endpoint
 > de uso que não é documentado publicamente e pode mudar a qualquer momento.
@@ -71,8 +92,12 @@ trocar pra Opus agora ou vou estourar antes de terminar?"*.
 - 🧾 **Licença vs consumo**: detecta seu plano pela API (Pro, Max, Time, Enterprise), compara o que você paga (tabela Brasil) com o consumo equivalente em preço de API e mostra se está compensando.
 - 🔥 **Fonte dos tokens ao vivo**: dentro da licença ou queimando créditos extras — com gasto das últimas 24h e média por hora dos extras.
 - 🚦 **Semáforo por janela** (verde < 80% projetado · amarelo 80–100% · vermelho ≥ 100%).
-- 🔮 **Projeção até o reset** com base no ritmo medido de consumo.
-- 🤖 **Veredito de troca de modelo** combinando limite ao vivo + ritmo dos logs.
+- 🔮 **Projeção até o reset** com base no ritmo medido de consumo, tanto no Claude
+  quanto no Codex, e desenhada na própria barra.
+- 🤖 **Conselho de modelo** combinando limite ao vivo + ritmo dos logs, escrito
+  em termos de folga e aperto (não assume qual modelo você usa por padrão).
+- 🔔 **Aviso de versão nova**, consultado uma vez pelo backend e mostrado em
+  todas as superfícies.
 - 📊 Gráficos de tokens por dia, perfil por hora do dia e evolução das janelas.
 - ⏱️ **Ritmo adaptativo e seguro**: lê a API a cada 90s perto do limite e a cada 5 min com folga, com backoff em `429` e sem tratar limite de requisição como desconexão.
 - 🖥️ **Interface unificada e responsiva**: cotas ativas em uma faixa, janelas zeradas recolhidas e cores por plataforma.
@@ -81,9 +106,10 @@ trocar pra Opus agora ou vou estourar antes de terminar?"*.
 
 ## Stack
 
-- **Frontend:** React + Vite + Konsta UI (tema iOS) + Tailwind CSS v4 + Chart.js. Componentes documentados no **Storybook**.
+- **Frontend:** React + Vite + Tailwind CSS v4 + Chart.js.
 - **Backend:** Python (só biblioteca padrão) — serve o build do frontend e expõe a API de estado/uso.
 - **App de desktop (macOS/Windows/Linux):** [Tauri](https://tauri.app) (Rust) — janela flutuante nativa que exibe o widget. Veja a seção [App de desktop](#app-de-desktop-macos-windows-e-linux).
+- **App nativo do macOS:** Swift + SwiftUI (Swift Package), cliente puro da API local. Veja [App nativo do macOS](#app-nativo-do-macos).
 
 ## Requisitos
 
@@ -101,18 +127,24 @@ Para **desenvolver a interface** (opcional): **Node.js 18+**.
 ```bash
 git clone https://github.com/eueduardocampos/claude-usage
 cd claude-usage
-python main.py     # macOS/Linux: python3 main.py
+python3 main.py
 ```
+
+No Windows, o comando é `python main.py`.
 
 Por padrão, o painel sobe em **http://localhost:8090** e abre sozinho no navegador.
 
-Dois detalhes importantes:
+Três detalhes importantes:
 
 - `localhost` é **a sua própria máquina**. Cada pessoa roda a sua instância, com os
   próprios dados e a própria conta. Não é um endereço público nem compartilhado, e
   ninguém de fora acessa o seu painel.
-- A porta (`8090`) e o abrir-sozinho são configuráveis em `config.json`
-  (`port` e `open_browser`). Se a porta já estiver em uso, troque por outra.
+- Um clone não vem com `config.json` (ele está no `.gitignore`, porque guarda
+  ajustes pessoais). O painel roda sem ele, nos valores padrão. Para ajustar
+  qualquer coisa, copie o exemplo primeiro: `cp config.example.json config.json`.
+- A porta (`8090`) é configurável em `config.json`, mas ela também está escrita
+  no app de mesa, no plugin do Stream Deck e no app nativo. Se trocar, essas
+  superfícies deixam de encontrar o painel até serem ajustadas junto.
 
 Você também pode dar dois cliques num lançador, sem abrir terminal:
 `iniciar-painel.bat` no Windows, `iniciar-painel.command` no macOS. Para
@@ -127,6 +159,10 @@ reconectar a conta, os equivalentes são `reconectar-conta.bat` /
 > (ou `~/.local/share/claude-usage/` no macOS/Linux) e é migrado automaticamente
 > na primeira execução. Rodar o banco em disco local é o que mantém a API
 > respondendo em milissegundos mesmo com o código num drive sincronizado.
+>
+> Rodando pelo clone (`python3 main.py`), o `config.json` e o `token.json` ficam
+> **na pasta do projeto**. Quem instala pelo app de mesa tem os três arquivos na
+> pasta de dados do usuário (veja [Conectar as contas](#conectar-as-contas)).
 
 ## App de desktop (macOS, Windows e Linux)
 
@@ -197,9 +233,34 @@ verifica o motor com HOME temporário e PATH vazio, e só publica o release quan
 todos os builds passam. Versões 2.x continham apenas o widget e exigiam iniciar
 o backend separadamente; não oferecem essa instalação autônoma.
 
+## App nativo do macOS
+
+Um app de barra de menu escrito em Swift/SwiftUI, em [`native-mac/`](native-mac/).
+Diferente do app de mesa, ele **não** embute o motor: é um cliente do painel que
+já estiver rodando na máquina.
+
+- Mostra as métricas **como texto na própria barra** (ex.: `5h 68% · 7d 44%`),
+  com o ícone tingido pelo semáforo. Em Preferências (⌘,) você escolhe quais
+  cotas aparecem ali.
+- O widget tem três formatos: **Padrão** (Claude e Codex lado a lado),
+  **Vertical** (empilhado, para encostar na lateral da tela) e **Compacto**
+  (uma linha por cota). Cada um guarda posição e tamanho próprios.
+- No menu: atualizar agora, reconectar a conta, abrir ao iniciar sessão e o
+  aviso de versão nova.
+
+```bash
+cd native-mac
+swift run                 # roda direto
+./build-app.sh            # gera .build/AIUsageWidget.app
+```
+
+Também dá para abrir o `native-mac/Package.swift` no Xcode e rodar por lá. O
+`.app` gerado tem assinatura ad-hoc: em outra máquina, o macOS pede **botão
+direito → Abrir** na primeira vez.
+
 ## Stream Deck
 
-O plugin **AI Usage 4.1** acompanha Claude e Codex com o perfil diário
+O plugin **AI Usage** acompanha Claude e Codex com o perfil diário
 **Consumo de IA** para Stream Deck +. Cotas e cobrança na primeira linha;
 ritmo e retorno mensal na segunda. Os dials alternam janelas, modelos,
 equivalência de API e totais. As ações e os perfis anteriores continuam disponíveis.
@@ -215,8 +276,8 @@ app iOS — ainda sem data definida.
 
 ## Desenvolvimento da interface
 
-A interface fica em `web/` (React + Vite + Konsta UI). O build versionado em
-`web/dist` é o que o `python main.py` serve — por isso quem só quer **usar** não
+A interface fica em `web/` (React + Vite). O build versionado em
+`web/dist` é o que o `python3 main.py` serve — por isso quem só quer **usar** não
 precisa de Node. Para **mexer na interface**:
 
 ```bash
@@ -224,11 +285,29 @@ cd web
 npm install
 npm run dev          # Vite em http://localhost:5173 (com a API do Python via proxy)
 npm run build        # regera web/dist (rode antes de commitar mudanças de UI)
-npm run storybook    # Storybook dos componentes em http://localhost:6006
 ```
 
-No `npm run dev`, deixe o backend rodando em paralelo (`python main.py`) para a
+No `npm run dev`, deixe o backend rodando em paralelo (`python3 main.py`) para a
 API responder.
+
+## Testes
+
+Os testes são scripts soltos, sem framework: cada um imprime `TUDO PASSOU` ou
+sai com erro. É o que o CI roda.
+
+```bash
+for t in test/test_*.py; do python3 "$t" || break; done
+node streamdeck/test/unified.js
+node streamdeck/test/fake_sd.js
+```
+
+Os prints do README são gerados com dados de demonstração (nenhuma conta real é
+lida) e o gerador também confere que o widget não transborda e que o console
+fica limpo:
+
+```bash
+CHROME_CHANNEL=chrome node docs/capture.mjs
+```
 
 ## Autenticação
 
@@ -241,11 +320,15 @@ automaticamente — **independente do Claude Desktop**.
 ## Como funciona o alerta
 
 - **Projeção:** usa a velocidade medida (%/hora) quando há amostras suficientes
-  (≥ 30 min de coleta); antes disso, usa a média desde a abertura da janela.
-- **Veredito de troca:** se a conta não expõe um bucket separado de Opus, o Opus
-  é avaliado pelo impacto na sessão (5h) e no semanal geral (7d), aplicando um
-  fator de intensidade. É uma **estimativa** e fica mais precisa conforme o painel
-  coleta amostras.
+  (≥ 30 min de coleta); antes disso, usa a média desde a abertura da janela. Uma
+  queda no valor é lida como reset da janela, não como consumo negativo. Vale
+  para as janelas do Claude e para as do Codex, pelo mesmo cálculo.
+- **Conselho de modelo:** projeta o mesmo ritmo aplicando um fator de
+  intensidade (a razão entre o preço de saída dos modelos) sobre a sessão (5h),
+  a semana (7d) e, quando existe, o teto semanal do próprio modelo. O texto fala
+  de "modelo mais pesado" e "modelo mais leve" em vez de nomear um modelo, porque
+  o padrão de cada pessoa é diferente. É uma **estimativa** e fica mais precisa
+  conforme o painel coleta amostras.
 
 ## Configuração
 
@@ -253,12 +336,23 @@ Copie `config.example.json` para `config.json` e ajuste o que quiser:
 
 | Campo | Descrição |
 |---|---|
-| `port` | Porta do painel (padrão 8090) |
-| ~~`refresh_seconds`~~ | Não é mais configurável: o ritmo do poll é adaptativo (veja abaixo) |
-| `currency` | Moeda do excedente (ex.: `BRL`, `USD`) |
+| `port` | Porta do painel (padrão 8090). Veja a ressalva em [Instalação](#instalação) |
+| `open_browser` | Abrir o navegador sozinho ao iniciar (padrão `true`) |
+| `callback_port` | Porta do callback do login OAuth (padrão 54545) |
+| `currency` | Moeda de exibição do painel (ex.: `BRL`) |
+| `usd_brl` | Câmbio fixo. Vazio = cotação automática, atualizada a cada hora |
 | `credits_divisor` | Divisor dos créditos (a API costuma vir em centavos → 100) |
-| `intended_hours` | Horizonte padrão do veredito de troca |
-| `callback_port` | Porta do callback do login OAuth |
+| `daily_days` | Quantos dias o gráfico diário mostra (padrão 30) |
+| `intended_hours` | Quantas horas você pretende trabalhar, usado no conselho de modelo |
+| `subscription_brl` | Mensalidade do Claude, para o comparativo de retorno |
+| `chatgpt_subscription_brl` | Mensalidade do ChatGPT |
+| `chatgpt_extra_brl` | Compras extras de Codex no mês atual |
+| `plan` | Força o plano detectado (`max_20x`, `pro`...) quando a detecção erra |
+| `switch_target` | Fixa o modelo usado como referência de "mais pesado" no conselho |
+| ~~`refresh_seconds`~~ | Não é mais configurável: o ritmo do poll é adaptativo (veja abaixo) |
+
+Os três valores em reais e as horas pretendidas também são editáveis pela
+própria interface, sem mexer no arquivo.
 
 ## Por que o intervalo da API é fixo
 

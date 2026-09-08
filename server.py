@@ -320,12 +320,6 @@ def build_state() -> dict:
     history = {sc: _with_brl(Ctx.store.scope_summary(sc), fx)
                for sc in ("geral", "mes", "semana", "dia")}
 
-    semrush = {
-        "balance": cfg.get("semrush_units_balance"),
-        "limit": cfg.get("semrush_units_limit"),
-        "updated_at": cfg.get("semrush_units_updated_at"),
-    }
-
     org = (Ctx.profile or {}).get("organization") or {}
     plan = {
         "selected": cfg.get("plan"),
@@ -355,7 +349,6 @@ def build_state() -> dict:
         "chatgpt": chatgpt,
         "plan": plan,
         "update": updates.state(),
-        "semrush": semrush,
         "config": {"refresh_seconds": _poll_interval(),
                    "intended_hours": cfg.get("intended_hours"),
                    "currency": cfg.get("currency"),
@@ -628,12 +621,6 @@ class Handler(BaseHTTPRequestHandler):
                 Ctx.cfg["chatgpt_extra_month"] = dt.datetime.now().strftime("%Y-%m")
             save_config(Ctx.cfg)
             self._send(200, json.dumps({"ok": True, "config": Ctx.cfg}))
-        elif p == "/api/semrush":
-            if "balance" in body and isinstance(body["balance"], (int, float)):
-                Ctx.cfg["semrush_units_balance"] = int(body["balance"])
-                Ctx.cfg["semrush_units_updated_at"] = dt.datetime.now(timezone.utc).isoformat()
-                save_config(Ctx.cfg)
-            self._send(200, json.dumps({"ok": True}))
         elif p == "/api/refresh":
             # respeita o backoff e um intervalo minimo: o botao Atualizar nao
             # pode virar um jeito de furar o rate limit da conta
@@ -667,8 +654,6 @@ CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 DEFAULTS = {"port": 8090, "refresh_seconds": 120, "currency": "BRL",
             "credits_divisor": 100, "intended_hours": 2.0, "daily_days": 30,
             "callback_port": 54545, "open_browser": True,
-            "semrush_units_balance": None, "semrush_units_limit": 49190,
-            "semrush_units_updated_at": None,
             "usd_brl": None,  # None = cotacao automatica (AwesomeAPI, cache 1h)
             "subscription_brl": None,  # valor mensal da licenca (R$), p/ balanço
             "chatgpt_subscription_brl": None,  # assinatura ChatGPT; comparacao por uso da cota

@@ -4,33 +4,29 @@ import SwiftUI
 /// dois cartões (Claude/Codex) lado a lado, footer com alerta/mensagem.
 struct WidgetPanelView: View {
     @EnvironmentObject var store: AppStateStore
+    @EnvironmentObject var prefs: AppPreferences
     let onOpenDashboard: () -> Void
     let onClose: () -> Void
     let onMinimize: () -> Void
     let onZoom: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: prefs.layout == .compacto ? 8 : 12) {
             header
 
-            HStack(alignment: .top, spacing: 12) {
-                AccountCardView(
-                    title: "Claude",
-                    color: AppColors.claude,
-                    quotas: store.claudeQuotas,
-                    burnText: store.claudeBurnText
-                )
-                AccountCardView(
-                    title: "Codex",
-                    color: AppColors.codex,
-                    quotas: store.codexQuotas,
-                    burnText: store.codexBurnText
-                )
+            switch prefs.layout {
+            case .padrao:
+                HStack(alignment: .top, spacing: 12) { cards }
+                footer
+            case .vertical:
+                VStack(alignment: .leading, spacing: 12) { cards }
+                Spacer(minLength: 0)
+                footer
+            case .compacto:
+                compact
             }
-
-            footer
         }
-        .padding(16)
+        .padding(prefs.layout == .compacto ? 12 : 16)
         .background(
             // Sem sombra desenhada aqui -- é a NSPanel (AppDelegate) que
             // recorta a view num arredondado de verdade e deixa o macOS
@@ -51,6 +47,53 @@ struct WidgetPanelView: View {
     /// Semáforo desenhado dentro do próprio card (não é o das janelas do
     /// sistema) -- fica junto do nome do app, à esquerda; o status "ao
     /// vivo" e a hora da última atualização ficam à direita.
+    /// Cotas zeradas somem quando o usuário pede (semana sem Codex, modelo
+    /// que ele não usou). Nunca esconde tudo: se está tudo zerado, mostra
+    /// tudo, senão o widget fica vazio sem explicação.
+    private var claudeQuotas: [QuotaData] { visible(store.claudeQuotas) }
+    private var codexQuotas: [QuotaData] { visible(store.codexQuotas) }
+
+    private func visible(_ quotas: [QuotaData]) -> [QuotaData] {
+        guard prefs.hideIdleQuotas else { return quotas }
+        let all = store.claudeQuotas + store.codexQuotas
+        guard all.contains(where: { !$0.isIdle }) else { return quotas }
+        return quotas.filter { !$0.isIdle }
+    }
+
+    @ViewBuilder
+    private var cards: some View {
+        AccountCardView(title: "Claude", color: AppColors.claude,
+                        quotas: claudeQuotas, burnText: store.claudeBurnText)
+        AccountCardView(title: "Codex", color: AppColors.codex,
+                        quotas: codexQuotas, burnText: store.codexBurnText)
+    }
+
+    /// Formato compacto: só as linhas de cota, agrupadas por conta, sem
+    /// cartão, sem reset e sem rodapé.
+    @ViewBuilder
+    private var compact: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach([("Claude", AppColors.claude, claudeQuotas),
+                     ("Codex", AppColors.codex, codexQuotas)], id: \.0) { name, color, quotas in
+                if !quotas.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(name)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(quotas) { quota in
+                            CompactRowView(quota: quota, accountColor: color)
+                        }
+                    }
+                }
+            }
+            if claudeQuotas.isEmpty && codexQuotas.isEmpty {
+                Text(store.footerMessage)
+                    .font(.system(size: 10))
+                    .foregroundStyle(store.footerIsAlert ? AppColors.alert : .secondary)
+            }
+        }
+    }
+
     private var header: some View {
         HStack {
             HStack(spacing: 8) {
@@ -59,24 +102,35 @@ struct WidgetPanelView: View {
                 TrafficLightButton(color: .green, symbol: "arrow.up.left.and.arrow.down.right", action: onZoom)
             }
 
-            Text("AI Usage")
-                .font(.system(size: 13, weight: .bold))
-                .padding(.leading, 4)
+            if prefs.layout != .compacto {
+                Text("AI Usage")
+                    .font(.system(size: 13, weight: .bold))
+                    .padding(.leading, 4)
+            }
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(store.isLive ? "Ao vivo" : "Conectando")
-                        .font(.system(size: 11))
+            // No compacto o espaço é curto: só a bolinha de "ao vivo", sem o
+            // texto e sem a hora da última leitura.
+            if prefs.layout == .compacto {
+                Circle()
+                    .fill(store.isLive ? AppColors.codex : Color.gray)
+                    .frame(width: 7, height: 7)
+                    .help(store.lastUpdatedText)
+            } else {
+                VStack(alignment: .trailing, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(store.isLive ? "Ao vivo" : "Conectando")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Circle()
+                            .fill(store.isLive ? AppColors.codex : Color.gray)
+                            .frame(width: 7, height: 7)
+                    }
+                    Text(store.lastUpdatedText)
+                        .font(.system(size: 9))
                         .foregroundStyle(.secondary)
-                    Circle()
-                        .fill(store.isLive ? AppColors.codex : Color.gray)
-                        .frame(width: 7, height: 7)
                 }
-                Text(store.lastUpdatedText)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
             }
 
             Button(action: onOpenDashboard) {

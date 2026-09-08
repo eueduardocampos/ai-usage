@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusMessageItem: NSMenuItem!
     private var refreshItem: NSMenuItem!
     private var updateItem: NSMenuItem!
+    private var layoutMenuItems: [NSMenuItem] = []
     private var preferencesWindow: NSWindow?
     private let store = AppStateStore()
     private let prefs = AppPreferences()
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.setActivationPolicy(.accessory)
         store.onUpdate = { [weak self] in self?.updateStatusItem() }
         prefs.onChange = { [weak self] in self?.updateStatusItem() }
+        prefs.onLayoutChange = { [weak self] layout in self?.applyLayout(layout) }
         setupStatusItem()
         setupPanel()
         store.startPolling()
@@ -65,6 +67,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alwaysOnTopItem.target = self
         alwaysOnTopItem.state = .on
         menu.addItem(alwaysOnTopItem)
+
+        let layoutItem = NSMenuItem(title: "Formato", action: nil, keyEquivalent: "")
+        let layoutMenu = NSMenu()
+        for layout in WidgetLayout.allCases {
+            let item = NSMenuItem(title: layout.title, action: #selector(changeLayout(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = layout.rawValue
+            item.toolTip = layout.detail
+            layoutMenu.addItem(item)
+        }
+        layoutItem.submenu = layoutMenu
+        menu.addItem(layoutItem)
+        layoutMenuItems = layoutMenu.items
 
         menu.addItem(.separator())
 
@@ -134,6 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func changeLayout(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let layout = WidgetLayout(rawValue: raw) else { return }
+        prefs.layout = layout
+        if !panel.isVisible { panel.makeKeyAndOrderFront(nil) }
+    }
+
     @objc private func openRelease() {
         guard let raw = store.state?.update?.url, let url = URL(string: raw) else { return }
         NSWorkspace.shared.open(url)
@@ -175,11 +197,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.hasShadow = true
         panel.minSize = NSSize(width: 440, height: 420)
         panel.contentView = hosting
-        // Lembra onde o usuário deixou a janela entre aberturas e reinícios.
-        panel.setFrameAutosaveName("AIUsageWidgetPanel")
-        if panel.frame.origin == .zero { panel.center() }
-
         self.panel = panel
+        applyLayout(prefs.layout, animate: false)
+    }
+
+    /// Cada formato tem tamanho mínimo e autosave próprios: alternar entre
+    /// eles não desfaz o ajuste feito no outro.
+    private func applyLayout(_ layout: WidgetLayout, animate: Bool = true) {
+        guard let panel else { return }
+        panel.minSize = layout.minSize
+        panel.setFrameAutosaveName(layout.autosaveName)
+        if !panel.setFrameUsingName(layout.autosaveName) {
+            // primeira vez neste formato: tamanho padrão, ancorado no canto
+            // superior esquerdo de onde a janela já estava
+            var frame = panel.frame
+            frame.origin.y += frame.height - layout.defaultSize.height
+            frame.size = layout.defaultSize
+            if frame.origin == .zero { panel.center() } else {
+                panel.setFrame(frame, display: true, animate: animate)
+            }
+        }
+        panel.invalidateShadow()
     }
 
     // MARK: - Ações do menu
@@ -239,6 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// entre um poll e outro).
     func menuWillOpen(_ menu: NSMenu) {
         updateStatusItem()
+        for item in layoutMenuItems {
+            item.state = (item.representedObject as? String) == prefs.layout.rawValue ? .on : .off
+        }
     }
 
     @objc private func togglePanel() {

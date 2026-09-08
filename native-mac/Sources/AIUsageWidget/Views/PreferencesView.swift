@@ -12,6 +12,24 @@ struct PreferencesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
+                Text("Formato do widget").font(.system(size: 13, weight: .semibold))
+                Picker("", selection: $prefs.layout) {
+                    ForEach(WidgetLayout.allCases) { layout in
+                        Text(layout.title).tag(layout)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text(prefs.layout.detail)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Toggle("Ocultar cotas zeradas", isOn: $prefs.hideIdleQuotas)
+                    .font(.system(size: 12))
+                    .padding(.top, 2)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Mostrar na barra de menu").font(.system(size: 13, weight: .semibold))
                 Text(previewText)
                     .font(.system(size: 12, weight: .medium, design: .rounded))

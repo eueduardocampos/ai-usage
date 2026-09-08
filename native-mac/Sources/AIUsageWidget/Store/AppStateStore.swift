@@ -8,9 +8,13 @@ struct QuotaData: Identifiable {
     let status: String
     let resetText: String
     let isStale: Bool
-    /// Projeção pro reset ("onde deve chegar", não só o valor atual). nil
-    /// quando a API não traz isso pronto (é o caso do Codex hoje).
+    /// Projeção pro reset: onde a cota deve chegar se o ritmo continuar. É o
+    /// diferencial do painel -- o valor atual qualquer app mostra.
+    let projected: Double?
     let projectedText: String?
+
+    /// Cota sem consumo nenhum: pode ser escondida pra sobrar tela.
+    var isIdle: Bool { (percent ?? 0) == 0 }
 }
 
 /// Consome GET /api/state a cada 10s (mesmo ritmo de web/src/Widget.jsx) e
@@ -90,6 +94,7 @@ final class AppStateStore: ObservableObject {
                 resetText: Formatting.resetText(from: q.resetsAt),
                 // frescor por item: o snapshot do Codex tem ritmo próprio
                 isStale: Formatting.isStale(q.snapshotTs ?? state?.snapshotTs ?? state?.generatedAt),
+                projected: q.projected,
                 projectedText: q.projected.map { "proj. \(Formatting.fmtPercent($0)) até lá" }
             )
         }

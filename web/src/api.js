@@ -16,10 +16,4 @@ export const api = {
     }).then((r) => { if (!r.ok) throw new Error('Falha ao salvar'); return r.json(); }),
   refresh: () => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()),
   authStart: () => fetch('/auth/start'),
-  setSemrush: (balance) =>
-    fetch('/api/semrush', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ balance }),
-    }).then((r) => r.json()),
 };

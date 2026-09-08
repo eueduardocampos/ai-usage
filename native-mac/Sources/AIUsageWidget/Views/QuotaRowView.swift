@@ -15,6 +15,10 @@ struct QuotaRowView: View {
         }
     }
 
+    private func fraction(_ value: Double?) -> Double {
+        min(max((value ?? 0) / 100, 0), 1)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -31,9 +35,15 @@ struct QuotaRowView: View {
                     // .primary inverte sozinho com o tema: sutil em claro e
                     // em escuro (branco fixo sumia no fundo claro).
                     Capsule().fill(Color.primary.opacity(0.08))
+                    // Trecho fantasma: até onde a cota deve chegar no reset.
+                    if let projected = quota.projected, projected > (quota.percent ?? 0), !quota.isStale {
+                        Capsule()
+                            .fill(barColor.opacity(0.3))
+                            .frame(width: geo.size.width * fraction(projected))
+                    }
                     Capsule()
                         .fill(barColor)
-                        .frame(width: geo.size.width * min(max((quota.percent ?? 0) / 100, 0), 1))
+                        .frame(width: geo.size.width * fraction(quota.percent))
                 }
             }
             .frame(height: 6)

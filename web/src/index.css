@@ -29,116 +29,15 @@ body,
   animation: live-pulse 2s infinite;
 }
 
-/* ---- dashboard mission control (rota /) — design system Astronauta ---- */
-/* Tipografia da casa: Sua (UI e dados) + Aconchego (display editorial) */
-@font-face {
-  font-family: 'Sua';
-  src: url('/fonts/SuaVariable.woff2') format('woff2');
-  font-weight: 100 900;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Aconchego';
-  src: url('/fonts/AconchegoVariable.woff2') format('woff2');
-  font-weight: 100 900;
-  font-display: swap;
-}
-
-html.is-dash { color-scheme: dark; background: #050a30; }
-html.is-dash body { background: #050a30; }
-/* o dashboard rola no documento (sticky header); o 100% fixo e so para o widget */
+/* ---- painel (rota /) ---- */
+/* Só o fundo do documento; o tema do painel vive em dashboard.css. Mesma cor
+   de lá, senão o overscroll mostra um azul que não aparece em nenhum outro
+   lugar da interface. */
+html.is-dash { color-scheme: dark; background: #0c1118; }
+html.is-dash body { background: #0c1118; }
 html.is-dash,
 html.is-dash body,
 html.is-dash #root {
   height: auto;
   min-height: 100%;
 }
-.mc-root {
-  font-family: 'Sua', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-/* frases editoriais (veredito, fonte dos tokens) em Aconchego */
-.mc-display {
-  font-family: 'Aconchego', 'Sua', system-ui, sans-serif;
-}
-.mc-num {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-}
-.mc-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: #8590c2;
-}
-.mc-card {
-  background: #0a1140;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 14px;
-}
-.mc-btn {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.06);
-  color: #c3c2b7;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 5px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
-}
-.mc-btn:hover { background: #004fff; border-color: #004fff; color: #fff; }
-.mc-pill {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: transparent;
-  color: #898781;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  padding: 4px 12px;
-  border-radius: 9999px;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-.mc-pill:hover { color: #fff; border-color: rgba(255, 255, 255, 0.35); }
-.mc-pill[data-active='true'] {
-  background: #004fff;
-  border-color: #004fff;
-  color: #fff;
-}
-.mc-input {
-  width: 90px;
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-  font: inherit;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  padding: 4px 8px;
-  border-radius: 8px;
-  outline: none;
-}
-.mc-input:focus { border-color: #004fff; }
-@keyframes mc-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(33, 196, 93, 0.5); }
-  70% { box-shadow: 0 0 0 8px rgba(33, 196, 93, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(33, 196, 93, 0); }
-}
-.mc-live {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 9999px;
-  background: #21c45d;
-  animation: mc-pulse 2s infinite;
-}
-.mc-live.off { background: #f2404c; animation: none; }
-.mc-live.warn { background: #fab219; animation: none; }
