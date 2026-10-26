@@ -35,3 +35,6 @@ desktop/src-tauri/engine/
 
 # Build do app nativo macOS (Swift Package)
 native-mac/.build/
+
+# Build da proposta do painel de decisao (servido por scripts/servir-proposta.py)
+web/dist-proposta/
