@@ -367,7 +367,7 @@ máquina para a mesma pasta compartilhada (Syncthing, Dropbox, OneDrive…) e d�
 um `machine_name` diferente a cada uma:
 
 ```json
-{"sync_dir": "~/Claude/sincronizadas/eduardo/ai-usage", "machine_name": "Mac"}
+{"sync_dir": "~/Sync/ai-usage", "machine_name": "Mac"}
 ```
 
 Cada painel grava ali o arquivo `<maquina>.json` com o próprio histórico,

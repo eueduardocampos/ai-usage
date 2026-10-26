@@ -25,6 +25,3 @@ sendo só a versão web, aberta no navegador pelo botão "Painel completo".
 Login/reconexão de conta também não é feito aqui — se `auth_connected` vier
 `false`, o footer avisa e o botão abre o painel web, que já sabe reconectar.
 
-Este projeto vive no branch `science` (não vai pro `main` público), porque o
-`/api/state` que ele consome inclui o campo `burn_by_source` (queima do
-Claude Science), que só existe nesse branch.
