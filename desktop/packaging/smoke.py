@@ -21,7 +21,8 @@ with tempfile.TemporaryDirectory() as temp:
             for _ in range(100):
                 try:
                     with urllib.request.urlopen(url+'/api/health',timeout=1) as r:
-                        assert json.load(r)=={'app':'ai-usage','protocol':1}
+                        health=json.load(r)
+                        assert health['app']=='ai-usage' and health['protocol']==1, health
                     break
                 except OSError:
                     if process.poll() is not None:

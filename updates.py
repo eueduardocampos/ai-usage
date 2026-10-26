@@ -16,8 +16,8 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RELEASES_API = "https://api.github.com/repos/eueduardocampos/claude-usage/releases/latest"
-RELEASES_PAGE = "https://github.com/eueduardocampos/claude-usage/releases/latest"
+RELEASES_API = "https://api.github.com/repos/astronauta-martech/ai-usage/releases/latest"
+RELEASES_PAGE = "https://github.com/astronauta-martech/ai-usage/releases/latest"
 CHECK_INTERVAL_S = 6 * 3600
 _lock = threading.Lock()
 _cache = {"ts": 0.0, "latest": None, "url": None, "error": None}

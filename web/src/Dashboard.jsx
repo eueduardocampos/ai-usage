@@ -162,7 +162,7 @@ const options = {
     }
   }
 };
-const REPO = 'https://github.com/eueduardocampos/claude-usage';
+const REPO = 'https://github.com/astronauta-martech/ai-usage';
 const STATUS_COLOR = { SEGURO: '#34c759', ATENCAO: '#ff9f0a', RISCO: '#ff453a', INDETERMINADO: '#8e8e93' };
 const STATUS_LABEL = { SEGURO: 'Seguro', ATENCAO: 'Atenção', RISCO: 'Risco', INDETERMINADO: 'Sem dados' };
 

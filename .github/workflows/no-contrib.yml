@@ -1,7 +1,7 @@
 name: Recusar PRs externos
 
-# Projeto pessoal: PRs de qualquer pessoa que nao seja o dono sao fechados
-# automaticamente. So o dono altera o repositorio.
+# Projeto da Astronauta Martech: PRs de quem nao e membro da organizacao (ou
+# colaborador do repositorio) sao fechados automaticamente.
 
 on:
   pull_request_target:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   close-external:
     runs-on: ubuntu-latest
-    if: ${{ github.event.pull_request.user.login != github.repository_owner }}
+    if: ${{ !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) }}
     steps:
       - uses: actions/github-script@v7
         with:
@@ -24,8 +24,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: pr.number,
-              body: "Obrigado pelo interesse! Este e um projeto pessoal e nao " +
-                    "aceita contribuicoes externas, entao este PR sera fechado " +
+              body: "Obrigado pelo interesse! Este projeto e mantido pela Astronauta " +
+                    "Martech e nao aceita contribuicoes externas, entao este PR sera fechado " +
                     "automaticamente. Fique a vontade para dar fork e adaptar " +
                     "para o seu uso. 🙂"
             });

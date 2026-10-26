@@ -54,7 +54,7 @@ Pressionar abre o painel; tocar no strip força uma atualização.
 ## Instalar
 
 1. Baixe o `digital.astronauta.claudeusage.streamDeckPlugin` na
-   [página de releases](https://github.com/eueduardocampos/claude-usage/releases)
+   [página de releases](https://github.com/eueduardocampos/ai-usage/releases)
    e dê **dois cliques** — o app do Stream Deck instala sozinho.
 2. (Stream Deck +) importe [Consumo de IA.streamDeckProfile](Consumo%20de%20IA.streamDeckProfile): as oito teclas e os quatro dials aparecem montados de uma vez.
 

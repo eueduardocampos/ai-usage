@@ -41,7 +41,7 @@ const state={generated_at:iso(),snapshot_ts:iso(),auth_connected:true,rate_limit
   quotas,
   windows:{five_hour:{utilization:42,resets_at:iso(3),rate:5,projected:57,label:'Sessão (5h)',window:'five_hour'},seven_day:{utilization:31,resets_at:iso(98),rate:.3,projected:60,label:'Semana (7d)',window:'seven_day'}},
   switch:{verdict:'ATENCAO',message:'No ritmo atual você chega a 86% no reset. Vale reservar o modelo caro para o que importa.',message_id:8,tightest_window:'five_hour',factor:1.67,factor_estimated:false,dominant_model:'claude-sonnet-5',target:'opus',target_label:'Opus',intended_hours:2,windows:{}},
-  update:{current:'4.2.0',latest:'4.2.0',url:'https://github.com/eueduardocampos/claude-usage/releases/latest',available:false},
+  update:{current:'4.2.0',latest:'4.2.0',url:'https://github.com/astronauta-martech/ai-usage/releases/latest',available:false},
   config:{usd_brl:5,subscription_brl:550,chatgpt_subscription_brl:550,chatgpt_extra_brl:0,intended_hours:2},
   history:hist(false),burn_tokph:{'claude-opus-5':18e6,'claude-sonnet-5':9e6,'claude-fable-5-1':4e6},
   extra_usage:{used:0,limit:20,used_brl:0,limit_brl:100,currency:'USD',burning:false},

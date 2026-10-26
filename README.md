@@ -5,6 +5,8 @@ ChatGPT usada pelo Codex. Além do quanto você já consumiu, ele mostra **onde 
 consumo vai chegar até o reset** se o ritmo continuar, e a partir disso responde
 se dá para usar um modelo mais pesado agora ou se é hora de segurar.
 
+Criado por [Eduardo Campos](https://github.com/eueduardocampos), conselheiro da Astronauta Martech, para quem quiser usar, de graça.
+
 ## Sobre
 
 Claude e Codex no mesmo painel: cotas em uso no topo, tokens separados por
@@ -19,7 +21,7 @@ por conta própria.
 | --- | --- | --- |
 | **Backend + painel** | Coleta as cotas, guarda o histórico e serve a interface completa | `python3 main.py` → http://localhost:8090 |
 | **Widget** | Versão enxuta com as cotas e o ritmo, para deixar de canto | http://localhost:8090/widget |
-| **App de mesa** | Mac, Windows e Linux: o widget numa janela flutuante, com o motor embutido (não precisa de Python) | instalador da [página de releases](https://github.com/eueduardocampos/claude-usage/releases) |
+| **App de mesa** | Mac, Windows e Linux: o widget numa janela flutuante, com o motor embutido (não precisa de Python) | instalador da [página de releases](https://github.com/eueduardocampos/ai-usage/releases) |
 | **App nativo do macOS** | Item na barra de menu com os números em texto, mais o widget em três formatos | `native-mac/` (veja [App nativo do macOS](#app-nativo-do-macos)) |
 | **Stream Deck** | Oito teclas e quatro dials com cotas, ritmo e retorno | perfil + plugin em [`streamdeck/`](streamdeck/README.md) |
 
@@ -125,8 +127,8 @@ Para **desenvolver a interface** (opcional): **Node.js 18+**.
 ## Instalação
 
 ```bash
-git clone https://github.com/eueduardocampos/claude-usage
-cd claude-usage
+git clone https://github.com/eueduardocampos/ai-usage
+cd ai-usage
 python3 main.py
 ```
 
@@ -173,7 +175,7 @@ ou em **Painel completo** para abrir a versão web no navegador. Não precisa de
 
 ### Instalar pelo release
 
-Baixe na [página de releases](https://github.com/eueduardocampos/claude-usage/releases):
+Baixe na [página de releases](https://github.com/eueduardocampos/ai-usage/releases):
 
 | Sistema | Arquivo |
 | --- | --- |
@@ -406,8 +408,9 @@ porque vêm do scan dos **logs locais** e não gastam requisição nenhuma.
 
 ## Contribuições
 
-Este é um **projeto pessoal** e **não aceita contribuições externas**. Pull
-requests de terceiros são fechados automaticamente. Fique à vontade para **usar,
+Este projeto é mantido por **Eduardo Campos**, conselheiro da Astronauta Martech, e
+**não aceita contribuições externas**. Pull requests de quem não faz parte da
+organização são fechados automaticamente. Fique à vontade para **usar,
 clonar e dar fork** e adaptar para o seu uso.
 
 ## Licença
