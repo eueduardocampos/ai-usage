@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import auth
 import codex_usage
 import forecast
+import machines
 import store as store_mod
 import usage_api
 import errors
@@ -41,6 +42,7 @@ _CODEX_SHORT = re.compile(r"^gpt-[\d.]+-codex-(.+)$", re.IGNORECASE)
 class Ctx:
     store = None
     codex = None
+    sync = None      # machines.MachineSync quando sync_dir esta configurado
     cfg = None
     token_store = None
     last_error = None         # frase pra UI (errors.humanize)
@@ -123,6 +125,9 @@ def _with_brl(summary: dict, fx) -> dict:
     if isinstance(out.get("by_source"), dict):
         out["by_source"] = {s: dict(d, cost_brl=_brl(d.get("cost"), fx))
                             for s, d in out["by_source"].items()}
+    if isinstance(out.get("by_machine"), dict):
+        out["by_machine"] = {m: dict(d, cost_brl=_brl(d.get("cost"), fx))
+                             for m, d in out["by_machine"].items()}
     return out
 
 
@@ -346,6 +351,8 @@ def build_state() -> dict:
         "dominant_model": dominant,
         "extra_usage": extra,
         "history": history,
+        # maquinas que somam no historico (None = recurso desligado)
+        "machines": Ctx.sync.info() if Ctx.sync else None,
         "chatgpt": chatgpt,
         "plan": plan,
         "update": updates.state(),
@@ -515,6 +522,8 @@ def scan_loop():
             if Ctx.codex:
                 Ctx.codex.scan()
                 Ctx.codex.refresh_limits()
+            if Ctx.sync:
+                Ctx.sync.run_once()  # publica no maximo 1x/min; le as outras sempre
         except Exception as e:
             print(f"[scan_loop] {e}")
 
@@ -574,7 +583,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/health":
                 self._send(200, json.dumps({"app": "ai-usage", "protocol": 1,
                                             "version": updates.current_version(),
-                                            "features": ["quotas", "brl", "label", "errors", "update"]}))
+                                            "features": ["quotas", "brl", "label", "errors", "update", "machines"]}))
             elif p == "/api/state":
                 self._send(200, json.dumps(build_state(), ensure_ascii=False))
             elif p == "/api/total":
@@ -657,7 +666,10 @@ DEFAULTS = {"port": 8090, "refresh_seconds": 120, "currency": "BRL",
             "usd_brl": None,  # None = cotacao automatica (AwesomeAPI, cache 1h)
             "subscription_brl": None,  # valor mensal da licenca (R$), p/ balanço
             "chatgpt_subscription_brl": None,  # assinatura ChatGPT; comparacao por uso da cota
-            "plan": None}  # id da licenca (pro, max_5x, ...); None = usar a detectada
+            "plan": None,  # id da licenca (pro, max_5x, ...); None = usar a detectada
+            # pasta compartilhada entre as maquinas da conta (Syncthing etc.);
+            # None = so' esta maquina. machine_name None = nome do computador
+            "sync_dir": None, "machine_name": None}
 
 
 def load_config():
@@ -709,10 +721,18 @@ def run(desktop=False, port=None, collect=True):
     Ctx.store = store_mod.Store(_db_path())
     Ctx.codex = codex_usage.CodexUsage(_db_path())
     Ctx.token_store = auth.TokenStore(DATA_DIR)
+    sync_dir = os.environ.get("AI_USAGE_SYNC_DIR") or Ctx.cfg.get("sync_dir")
+    if sync_dir:
+        Ctx.sync = machines.MachineSync(
+            Ctx.store, Ctx.codex, sync_dir,
+            os.environ.get("AI_USAGE_MACHINE") or Ctx.cfg.get("machine_name"))
 
     def initialize():
         Ctx.codex.scan()
         Ctx.codex.refresh_limits(force=True)
+        if Ctx.sync:
+            Ctx.store.scan(log=lambda *a: None)
+            Ctx.sync.run_once(force=True)
         poll_once()
         threading.Thread(target=poller_loop, daemon=True).start()
         threading.Thread(target=scan_loop, daemon=True).start()

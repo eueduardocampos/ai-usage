@@ -15,6 +15,37 @@ function resetText(value, now) {
   const h = (new Date(value).getTime() - now) / 3600000;
   return !Number.isFinite(h) ? 'sem previsão' : h <= 0 ? 'aguardando reset' : h >= 24 ? `${Math.floor(h / 24)}d ${Math.floor(h % 24)}h` : `${Math.floor(h)}h ${Math.floor(h % 1 * 60)}m`;
 }
+function since(iso, now) {
+  if (!iso) return 'ainda sem dados';
+  const min = Math.max(0, Math.round((now - new Date(iso)) / 60000));
+  if (min < 2) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `há ${h} h` : `há ${Math.round(h / 24)} dias`;
+}
+// Consumo de cada computador da conta + a soma. So' aparece com sync_dir
+// configurado (state.machines). As cotas de 5h/semana ja sao da conta inteira.
+function Machines({ state, cg, fx, now }) {
+  const info = state.machines;
+  if (!info) return null;
+  const hc = state.history || {},
+    ho = cg.history || {};
+  const part = (scope, name) => {
+    const a = hc[scope]?.by_machine?.[name],
+      b = ho[scope]?.by_machine?.[name];
+    const cost = a?.cost_brl == null && (b?.equivalent_usd == null || !fx) ? null
+      : (a?.cost_brl || 0) + (b?.equivalent_usd && fx ? b.equivalent_usd * fx : 0);
+    return { tokens: (a?.tokens || 0) + (b?.tokens || 0), cost };
+  };
+  const rows = info.machines.map(m => ({ ...m, all: part('geral', m.name), month: part('mes', m.name) }));
+  const sum = key => rows.reduce((t, r) => t + (r[key].tokens || 0), 0);
+  const sumCost = key => rows.some(r => r[key].cost != null) ? rows.reduce((t, r) => t + (r[key].cost || 0), 0) : null;
+  const total = sum('all');
+  return <Panel title="Consumo por máquina" note="Mesma conta · cada computador publica o próprio histórico"><div className="u-table-wrap"><table><thead><tr><th>Máquina</th><th>Tokens · histórico</th><th>Participação</th><th>Tokens · mês</th><th>Equivalente no mês</th><th>Dados de</th></tr></thead><tbody>
+    {rows.map(r => <tr key={r.name}><td>{r.local ? '● ' : '○ '}{r.name}{r.local ? <small> · esta</small> : null}</td><td>{fmtTokens(r.all.tokens)}</td><td>{pct(total ? r.all.tokens / total * 100 : 0)}</td><td>{fmtTokens(r.month.tokens)}</td><td>{money(r.month.cost)}</td><td>{r.local ? 'agora' : since(r.updated_at, now)}</td></tr>)}
+    <tr><td><strong>Total</strong></td><td><strong>{fmtTokens(total)}</strong></td><td>100%</td><td><strong>{fmtTokens(sum('month'))}</strong></td><td><strong>{money(sumCost('month'))}</strong></td><td /></tr>
+  </tbody></table></div><p className="u-hint">{rows.length < 2 ? `Nenhuma outra máquina publicou ainda em ${info.dir}. ` : ''}{info.error ? `Falha na pasta compartilhada: ${info.error}. ` : ''}Claude e Codex somados. As janelas de 5 horas e semanal já são da conta inteira; o ritmo por hora é só desta máquina.</p></Panel>;
+}
 function Panel({
   title,
   note,
@@ -381,10 +412,11 @@ export default function Dashboard() {
     </section>
     <Verdict sw={state.switch} intended={state.config.intended_hours} onHours={h => save({ intended_hours: h })} saving={saving} />
     <div className="u-grid u-overview">
-      <Panel title="Tokens processados" note="Registros locais · histórico completo" className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
+      <Panel title="Tokens processados" note={state.machines ? `${state.machines.machines.length} máquinas somadas · histórico completo` : 'Registros locais · histórico completo'} className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
       <Panel title="Investimento mensal" note="Assinaturas informadas"><div className="u-medium">{money(fixed)}</div><p>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</p><p className="u-hint">Extras são contabilizados separadamente.</p></Panel>
       <Panel title="Valor equivalente neste mês" note="Estimativa de tokens em API"><div className="u-medium">{money(monthA != null && monthB != null ? monthA + monthB : null)}</div><p>{paid && monthB != null ? `${((monthA + monthB) / paid).toFixed(2)}× do custo total informado` : 'Informe os extras para comparar o custo total.'}</p><p className="u-hint">{cg.history?.mes?.unpriced_tokens ? 'Parcial: há modelos sem preço mapeado e/ou extras não informados.' : 'Tarifas padrão; não representa cobrança.'}</p></Panel>
     </div>
+    <Machines state={state} cg={cg} fx={fx} now={now} />
     <div className="u-advice"><span>LEITURA DO MOMENTO</span><p>{weekly ? `Codex: ${pct(weekly.value)} da cota semanal. ` : 'Cota Codex indisponível. '}{trend ? trend.projected >= 100 ? 'O ritmo observado pode esgotar a cota antes do reset; distribua o trabalho entre as plataformas.' : `Projeção de ${pct(trend.projected)} no reset; há margem no ritmo observado.` : 'A projeção ficará disponível após pelo menos 30 minutos de snapshots da mesma janela.'}</p></div>
     <div className="u-grid u-two"><Panel title="Ritmo por modelo" note="Tokens/h · média das últimas 2 horas"><div className="u-medium">{fmtTokens(burnA + burnB)}<small> / hora</small></div><Split a={burnA} b={burnB} /><div className="u-models">{burn.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span><i style={{
                     color: r.color

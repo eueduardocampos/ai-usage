@@ -78,6 +78,10 @@ class CodexUsage:
         self._last_limit_fetch = 0.0
         self._api_error = None
         self._snapshot_path = snapshot_path
+        # eventos das OUTRAS maquinas (machines.py): entram no historico,
+        # nunca na queima nem no perfil por hora (que alimentam projecoes)
+        self.remote_events = []
+        self.local_machine = None
         if snapshot_path:
             with sqlite3.connect(snapshot_path) as db:
                 db.execute("CREATE TABLE IF NOT EXISTS codex_limits (ts TEXT PRIMARY KEY, payload TEXT)")
@@ -252,7 +256,7 @@ class CodexUsage:
         return None
 
     @staticmethod
-    def _summarize(events, start=None):
+    def _summarize(events, start=None, local_machine=None):
         selected = []
         for event in events:
             when = _parse_iso(event.get("timestamp"))
@@ -271,11 +275,17 @@ class CodexUsage:
             "equivalent_usd": 0.0,
             "unpriced_tokens": 0,
             "first_event": min((e["timestamp"] for e in selected), default=None),
+            "by_machine": {},
         }
         for event in selected:
             for key in ("total_tokens", "input_tokens", "cached_input_tokens",
                         "output_tokens", "reasoning_output_tokens"):
                 out[key] += event[key]
+            mk = event.get("machine") or local_machine or "local"
+            bmach = out["by_machine"].setdefault(mk, {"tokens": 0, "calls": 0, "equivalent_usd": 0.0,
+                                                       "local": not event.get("machine")})
+            bmach["tokens"] += event["total_tokens"]
+            bmach["calls"] += 1
             model = event["model"]
             m = by_model.setdefault(model, {"model": model, "tokens": 0, "equivalent_usd": 0.0, "unpriced_tokens": 0})
             m["tokens"] += event["total_tokens"]
@@ -286,6 +296,7 @@ class CodexUsage:
             else:
                 out["equivalent_usd"] += cost
                 m["equivalent_usd"] += cost
+                bmach["equivalent_usd"] += cost
         out["by_model"] = sorted(by_model.values(), key=lambda m: m["tokens"], reverse=True)
         return out
 
@@ -355,6 +366,15 @@ class CodexUsage:
             rows = db.execute("SELECT ts, payload FROM codex_limits WHERE ts >= ? ORDER BY ts", ((dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=48)).isoformat(),)).fetchall()
         return [{"ts": ts, "limits": json.loads(payload)} for ts, payload in rows]
 
+    def local_events(self):
+        """Eventos OpenAI lidos dos logs desta maquina — o que ela publica
+        para as outras (machines.py). Vai evento a evento, sem agregar: o
+        preco dobra acima de 272 mil tokens de entrada por chamada."""
+        with self._lock:
+            return [e for _, record in self._files.values()
+                    if record.get("model_provider") == "openai"
+                    for e in record["events"]]
+
     def state(self):
         with self._lock:
             records = [entry[1] for entry in self._files.values()]
@@ -402,21 +422,24 @@ class CodexUsage:
                 limits = self._direct_limits
             now = dt.datetime.now(dt.timezone.utc)
             recent = self._summarize(events, now - dt.timedelta(hours=2))
+            local_events = events
+            events = events + self.remote_events
+            lm = self.local_machine
             return {
                 "available": bool(records),
                 "generated_at": now.isoformat(),
                 "limits": limits,
                 "history": {
-                    "dia": self._summarize(events, self._scope_start("dia")),
-                    "semana": self._summarize(events, self._scope_start("semana")),
-                    "mes": self._summarize(events, self._scope_start("mes")),
-                    "geral": self._summarize(events),
+                    "dia": self._summarize(events, self._scope_start("dia"), lm),
+                    "semana": self._summarize(events, self._scope_start("semana"), lm),
+                    "mes": self._summarize(events, self._scope_start("mes"), lm),
+                    "geral": self._summarize(events, local_machine=lm),
                 },
                 "burn_tokph": recent["total_tokens"] / 2,
                 "burn_by_model": {m["model"]: m["tokens"] / 2 for m in recent["by_model"]},
                 "pricing": {"verified_at": "2026-09-05", "basis": "standard text API; no tool fees or Fast premium", "models": API_PRICES},
                 "limit_history": self.limit_history(),
-                "hour_of_day": self._hour_of_day(events),
+                "hour_of_day": self._hour_of_day(local_events),
                 "daily": self._daily_series(events),
                 "heatmap": self._heatmap(events),
                 "native_sessions": len(native_sessions),

@@ -349,10 +349,34 @@ Copie `config.example.json` para `config.json` e ajuste o que quiser:
 | `chatgpt_extra_brl` | Compras extras de Codex no mês atual |
 | `plan` | Força o plano detectado (`max_20x`, `pro`...) quando a detecção erra |
 | `switch_target` | Fixa o modelo usado como referência de "mais pesado" no conselho |
+| `sync_dir` | Pasta compartilhada entre os seus computadores, para somar o consumo de todos (veja [Várias máquinas](#várias-máquinas)). Vazio = só esta máquina |
+| `machine_name` | Nome desta máquina no painel (ex.: `Mac`, `Windows`). Vazio = nome do computador |
 | ~~`refresh_seconds`~~ | Não é mais configurável: o ritmo do poll é adaptativo (veja abaixo) |
 
 Os três valores em reais e as horas pretendidas também são editáveis pela
 própria interface, sem mexer no arquivo.
+
+## Várias máquinas
+
+As janelas de 5 horas e semanal vêm da conta, então já são as mesmas em todo
+computador. Os tokens e o valor equivalente vêm dos logs locais, e cada
+computador só enxerga o próprio uso. Para somar, aponte `sync_dir` de cada
+máquina para a mesma pasta compartilhada (Syncthing, Dropbox, OneDrive…) e dê
+um `machine_name` diferente a cada uma:
+
+```json
+{"sync_dir": "~/Claude/sincronizadas/eduardo/ai-usage", "machine_name": "Mac"}
+```
+
+Cada painel grava ali o arquivo `<maquina>.json` com o próprio histórico,
+agregado por hora (Codex vai chamada a chamada, porque o preço muda acima de
+272 mil tokens de entrada), e lê os arquivos das outras. Cada máquina só
+escreve o seu arquivo, então não há conflito; o banco `painel.db` continua
+local. O painel passa a somar todas no histórico, no mês, no gráfico diário e
+no mapa de calor, e mostra a tabela "Consumo por máquina" com cada uma e o
+total. O ritmo por hora e as projeções continuam só da máquina local.
+`AI_USAGE_SYNC_DIR` e `AI_USAGE_MACHINE` substituem os dois campos por
+variável de ambiente.
 
 ## Por que o intervalo da API é fixo
 
