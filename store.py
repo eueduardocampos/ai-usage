@@ -4,7 +4,8 @@ store.py — banco sqlite proprio do painel + scan dos logs locais + agregacoes.
 Tabelas:
   turns(message_id PK, timestamp, model, input, output, cache_read, cache_creation,
         source, cost)                            -> source: 'code' | 'science'
-  processed_files(path PK, mtime, lines)         -> scan incremental
+  processed_files(path PK, mtime, lines, size, offset) -> scan incremental: so' o
+                                                 que foi anexado desde o offset e' lido
   api_snapshots(ts, window, utilization, resets_at, used_credits, monthly_limit, currency)
   remote_hours(machine, hour, model, source, ..., cost, turns)
                                                  -> consumo das OUTRAS maquinas,
@@ -112,6 +113,11 @@ class Store:
             PRIMARY KEY (machine, hour, model, source)
         );
         """)
+        # migracao: scan incremental guarda ate' onde cada arquivo foi lido
+        pf_cols = {r[1] for r in c.execute("PRAGMA table_info(processed_files)")}
+        if "offset" not in pf_cols:
+            c.execute("ALTER TABLE processed_files ADD COLUMN size INTEGER DEFAULT 0")
+            c.execute("ALTER TABLE processed_files ADD COLUMN offset INTEGER DEFAULT 0")
         # migracao: bancos antigos nao tem source/cost
         cols = {r[1] for r in c.execute("PRAGMA table_info(turns)")}
         if "source" not in cols:
@@ -126,34 +132,51 @@ class Store:
 
     # --- scan dos logs -------------------------------------------------------
 
-    @_locked
     def scan(self, log=lambda *a: None) -> dict:
+        """Scan incremental dos .jsonl do Claude Code.
+
+        Le so' o que foi anexado desde o ultimo offset de cada arquivo (uma
+        sessao aberta chega a 200 MB; reler tudo a cada 10 s segurava o lock
+        do banco, e com ele o /api/state). Arquivo que encolheu e' relido do
+        zero; INSERT OR IGNORE garante que reler nunca duplica. O parse roda
+        FORA do lock; so' a gravacao entra nele."""
         files = glob.glob(os.path.join(PROJECTS_DIR, "**", "*.jsonl"), recursive=True)
-        new_turns = 0
-        new_files = 0
-        cur = self.conn.cursor()
-        seen = {r["path"]: (r["mtime"], r["lines"])
-                for r in cur.execute("SELECT path, mtime, lines FROM processed_files")}
+        with self._lock:
+            seen = {r["path"]: (r["mtime"], r["size"] or 0, r["offset"] or 0)
+                    for r in self.conn.execute(
+                        "SELECT path, mtime, size, offset FROM processed_files")}
+        pendentes = []  # (fp, mtime, size, rows, lines, offset_novo, novo)
         for fp in files:
             try:
-                mtime = os.path.getmtime(fp)
+                st = os.stat(fp)
             except OSError:
                 continue
-            if fp in seen and abs(seen[fp][0] - mtime) < 1e-6:
+            mtime, size = st.st_mtime, st.st_size
+            antigo = seen.get(fp)
+            if antigo and abs(antigo[0] - mtime) < 1e-6 and antigo[1] == size:
                 continue  # inalterado
-            rows, lines = self._parse_file(fp)
-            for r in rows:
-                cur.execute("""INSERT OR IGNORE INTO turns
-                    (message_id, timestamp, model, input_tokens, output_tokens,
-                     cache_read, cache_creation) VALUES (?,?,?,?,?,?,?)""", r)
-                new_turns += cur.rowcount
-            cur.execute("""INSERT INTO processed_files(path, mtime, lines)
-                VALUES(?,?,?) ON CONFLICT(path) DO UPDATE SET mtime=?, lines=?""",
-                (fp, mtime, lines, mtime, lines))
-            if fp not in seen:
-                new_files += 1
-        science = self._scan_science(cur)
-        self.conn.commit()
+            inicio = antigo[2] if antigo and size >= antigo[2] else 0
+            try:
+                rows, lines, offset = self._parse_file(fp, inicio)
+            except OSError:
+                continue  # sumiu ou esta' bloqueado: fica para o proximo scan
+            pendentes.append((fp, mtime, size, rows, lines, offset, antigo is None))
+        new_turns = new_files = 0
+        with self._lock:
+            cur = self.conn.cursor()
+            for fp, mtime, size, rows, lines, offset, novo in pendentes:
+                for r in rows:
+                    cur.execute("""INSERT OR IGNORE INTO turns
+                        (message_id, timestamp, model, input_tokens, output_tokens,
+                         cache_read, cache_creation) VALUES (?,?,?,?,?,?,?)""", r)
+                    new_turns += cur.rowcount
+                cur.execute("""INSERT INTO processed_files(path, mtime, lines, size, offset)
+                    VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET
+                    mtime=excluded.mtime, lines=excluded.lines, size=excluded.size,
+                    offset=excluded.offset""", (fp, mtime, lines, size, offset))
+                new_files += novo
+            science = self._scan_science(cur)
+            self.conn.commit()
         log(f"[scan] arquivos novos/alterados processados, +{new_turns} turnos, "
             f"~{science} frames do science")
         return {"new_turns": new_turns, "new_files": new_files, "files": len(files),
@@ -212,35 +235,41 @@ class Store:
         return total
 
     @staticmethod
-    def _parse_file(fp):
+    def _parse_file(fp, inicio=0):
+        """Le o arquivo a partir do byte `inicio`. Devolve (rows, linhas lidas,
+        offset ate' onde foi lido). Uma ultima linha ainda sem quebra (o Claude
+        Code pode estar no meio da escrita) fica para o proximo scan."""
         rows = []
         n = 0
-        with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                n += 1
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    r = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if r.get("type") != "assistant":
-                    continue
-                msg = r.get("message", {}) or {}
-                u = msg.get("usage") or r.get("usage") or {}
-                mid = msg.get("id")
-                if not mid:
-                    continue
-                i = u.get("input_tokens") or 0
-                o = u.get("output_tokens") or 0
-                cr = u.get("cache_read_input_tokens") or 0
-                cc = u.get("cache_creation_input_tokens") or 0
-                if (i + o + cr + cc) == 0:
-                    continue
-                rows.append((mid, r.get("timestamp"), msg.get("model"),
-                             i, o, cr, cc))
-        return rows, n
+        with open(fp, "rb") as f:
+            f.seek(inicio)
+            dados = f.read()
+        fim = dados.rfind(b"\n") + 1  # so' ate' a ultima linha completa
+        offset = inicio + fim
+        for bruto in dados[:fim].split(b"\n"):
+            n += 1
+            line = bruto.decode("utf-8", errors="ignore").strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("type") != "assistant":
+                continue
+            msg = r.get("message", {}) or {}
+            u = msg.get("usage") or r.get("usage") or {}
+            mid = msg.get("id")
+            if not mid:
+                continue
+            i = u.get("input_tokens") or 0
+            o = u.get("output_tokens") or 0
+            cr = u.get("cache_read_input_tokens") or 0
+            cc = u.get("cache_creation_input_tokens") or 0
+            if (i + o + cr + cc) == 0:
+                continue
+            rows.append((mid, r.get("timestamp"), msg.get("model"), i, o, cr, cc))
+        return rows, n, offset
 
     # --- consumo entre maquinas (machines.py) --------------------------------
 
@@ -267,12 +296,16 @@ class Store:
         """Troca todo o consumo importado de `machine` pelo do arquivo atual
         (o arquivo e' sempre o historico completo daquela maquina)."""
         cur = self.conn.cursor()
-        cur.execute("DELETE FROM remote_hours WHERE machine=?", (machine,))
-        cur.executemany("""INSERT OR REPLACE INTO remote_hours
-            (machine, hour, model, source, input_tokens, output_tokens,
-             cache_read, cache_creation, cost, turns)
-            VALUES (?,?,?,?,?,?,?,?,?,?)""", [(machine, *h) for h in hours])
-        self.conn.commit()
+        try:
+            cur.execute("DELETE FROM remote_hours WHERE machine=?", (machine,))
+            cur.executemany("""INSERT OR REPLACE INTO remote_hours
+                (machine, hour, model, source, input_tokens, output_tokens,
+                 cache_read, cache_creation, cost, turns)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""", [(machine, *h) for h in hours])
+            self.conn.commit()
+        except sqlite3.Error:
+            self.conn.rollback()  # nunca deixar so' o DELETE valer
+            raise
 
     @_locked
     def drop_remote_except(self, machines):

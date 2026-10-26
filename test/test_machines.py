@@ -86,6 +86,28 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:  # sqlite s
     s_mac.run_once(force=True)
     check(set(mac.scope_summary("geral")["by_machine"]) == {"Mac", "Windows"}, "ignora conflito/arquivo alheio")
 
+    # arquivo torto da outra maquina: linha fora do formato e' descartada, o resto vale
+    with open(os.path.join(shared, "windows.json"), encoding="utf-8") as f:
+        payload = json.load(f)  # daqui em diante, o arquivo que o Mac le e' o do Windows
+    torto = dict(payload)
+    torto["claude"] = payload["claude"] + [["2026-10-20T10", "m", "code", "18032", 1, 1, 1, None, 1],
+                                          {"x": 1}, ["2026-10-20T11", "m", "code", 1, 1, 1, 1, 1.0, 1, "extra"]]
+    torto["codex"] = [["2026-10-20T10:00:00+00:00", "gpt-5.5", "5000", 0, 1, 0]]
+    with open(os.path.join(shared, "windows.json"), "w") as f:
+        json.dump(torto, f)
+    s_mac.run_once(force=True)
+    check(s_mac.error is None and mac.scope_summary("geral")["total_tokens"] == total, "linhas fora do formato sao ignoradas; as boas somam")
+    # NaN no arquivo: JSON recusado inteiro; fica valendo a ultima leitura boa
+    with open(os.path.join(shared, "windows.json"), "w") as f:
+        f.write(json.dumps(dict(payload, claude=[["2026-10-20T10", "m", "code", 1, 1, 1, 1, 1.5, 1]])).replace("1.5", "NaN"))
+    s_mac.run_once(force=True)
+    check(s_mac.error is None, "NaN no arquivo nao derruba o painel (erro so' no log)")
+    check(mac.scope_summary("geral")["total_tokens"] == total, "arquivo recusado: vale a ultima leitura boa")
+    with open(os.path.join(shared, "windows.json"), "w") as f:
+        json.dump(payload, f)
+    s_mac.run_once(force=True)
+    check(mac.scope_summary("geral")["total_tokens"] == total, "arquivo bom de novo: soma volta")
+
     # maquina que saiu da pasta deixa de somar
     os.remove(os.path.join(shared, "windows.json"))
     s_mac.run_once(force=True)

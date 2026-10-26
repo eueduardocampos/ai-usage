@@ -22,12 +22,69 @@ import datetime as dt
 import glob
 import hashlib
 import json
+import math
 import os
 import re
 import socket
 
 FORMAT = 1
 EXPORT_INTERVAL_S = 60  # o scan local roda a cada 10s; publicar a cada 1 min basta
+ARQUIVO_MAX = 20 * 1024 * 1024  # um ano de uso intenso cabe em poucos MB
+_HORA = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}$")
+
+
+def _rejeita_constante(nome):
+    raise ValueError(f"valor nao permitido: {nome}")
+
+
+def _inteiro(v):
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 2**53
+
+
+def _numero_ou_nulo(v):
+    return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
+
+
+def _texto(v, max_len=200):
+    return isinstance(v, str) and 0 < len(v) <= max_len
+
+
+def linha_claude_valida(h):
+    """[hora UTC, modelo, origem, input, output, cache_read, cache_creation, custo|null, turnos]"""
+    return (isinstance(h, list) and len(h) == 9 and isinstance(h[0], str) and _HORA.match(h[0])
+            and _texto(h[1]) and _texto(h[2], 40) and all(_inteiro(x) for x in h[3:7])
+            and _numero_ou_nulo(h[7]) and _inteiro(h[8]))
+
+
+def evento_codex_valido(e):
+    """[timestamp, modelo, input, cached_input, output, reasoning]"""
+    return (isinstance(e, list) and len(e) == 6 and _texto(e[0], 40) and _texto(e[1])
+            and all(_inteiro(x) for x in e[2:6]))
+
+
+def ler_arquivo(path):
+    """JSON estrito (sem NaN/Infinity), com teto de tamanho. O arquivo vem de
+    OUTRA maquina: nada nele e' confiavel ate' ser validado linha a linha.
+    Devolve (dados, descartadas) ou levanta ValueError/OSError."""
+    if os.path.getsize(path) > ARQUIVO_MAX:
+        raise ValueError(f"arquivo maior que {ARQUIVO_MAX // 1024 // 1024} MB")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f, parse_constant=_rejeita_constante)
+    if not isinstance(data, dict):
+        raise ValueError("nao e' um objeto JSON")
+    claude = data.get("claude")
+    codex = data.get("codex")
+    if claude is None:
+        claude = []
+    if codex is None:
+        codex = []
+    if not isinstance(claude, list) or not isinstance(codex, list):
+        raise ValueError("'claude' e 'codex' precisam ser listas")
+    bons_c = [h for h in claude if linha_claude_valida(h)]
+    bons_x = [e for e in codex if evento_codex_valido(e)]
+    descartadas = (len(claude) - len(bons_c)) + (len(codex) - len(bons_x))
+    data["claude"], data["codex"] = bons_c, bons_x
+    return data, descartadas
 
 
 def slug(name: str) -> str:
@@ -104,8 +161,9 @@ class MachineSync:
                     present.add(self._seen[path][1])
                     codex_events.extend(self._seen[path][2])
                     continue
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
+                data, descartadas = ler_arquivo(path)
+                if descartadas:
+                    self.log(f"[machines] {os.path.basename(path)}: {descartadas} linha(s) fora do formato, ignoradas")
             except (OSError, ValueError) as e:
                 # leitura falhou agora (arquivo chegando?): fica com a ultima boa
                 self.log(f"[machines] ignorando {path}: {e}")
@@ -120,15 +178,15 @@ class MachineSync:
                 self.log(f"[machines] {path} usa o mesmo nome desta maquina ({name}); "
                          "ajuste machine_name no config.json de uma das duas")
                 continue
-            # linha fora do formato e' descartada sozinha, sem perder o resto
-            self.store.replace_remote(name, [h for h in data.get("claude") or []
-                                             if isinstance(h, list) and len(h) == 9])
+            if not _texto(name, 80):
+                self.log(f"[machines] ignorando {path}: nome de maquina invalido")
+                continue
+            self.store.replace_remote(name, data["claude"])  # ja validado em ler_arquivo
             events = [{"timestamp": ts, "model": m, "input_tokens": i,
                        "cached_input_tokens": c, "output_tokens": o,
                        "reasoning_output_tokens": r, "total_tokens": i + o,
                        "machine": name}
-                      for ts, m, i, c, o, r in (e for e in data.get("codex") or []
-                                                if isinstance(e, list) and len(e) == 6)]
+                      for ts, m, i, c, o, r in data["codex"]]
             self._seen[path] = (mtime, name, events)
             self._remote[name] = {"updated_at": data.get("updated_at"), "file": path}
             present.add(name)

@@ -56,16 +56,35 @@ def _read_json(path: str):
         return None
 
 
+def protege_arquivo(path: str):
+    """So' o dono le o arquivo. No POSIX, chmod 600. No Windows, chmod nao faz
+    nada: e' preciso tirar a heranca da ACL e dar acesso so' ao usuario atual,
+    senao qualquer conta local da maquina le o token."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    if os.name != "nt":
+        return
+    usuario = os.environ.get("USERNAME")
+    if not usuario:
+        return
+    try:
+        import subprocess
+        subprocess.run(["icacls", path, "/inheritance:r", "/grant:r", f"{usuario}:F"],
+                       check=False, capture_output=True, timeout=15,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _write_secure_json(path: str, data: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
-    try:
-        os.chmod(path, 0o600)  # no-op efetivo no Windows, mas mantem a intencao
-    except OSError:
-        pass
+    protege_arquivo(path)
 
 
 # --- store proprio do token --------------------------------------------------

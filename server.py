@@ -7,6 +7,7 @@ ultimo snapshot do banco, entao a interface nunca depende da rede.
 
 import datetime as dt
 import json
+import math
 import mimetypes
 import os
 import shutil
@@ -43,6 +44,8 @@ class Ctx:
     store = None
     codex = None
     sync = None      # machines.MachineSync quando sync_dir esta configurado
+    db_path = None   # onde o sqlite esta' de verdade (vai no log e no /api/health)
+    token_path = None
     cfg = None
     token_store = None
     last_error = None         # frase pra UI (errors.humanize)
@@ -97,6 +100,64 @@ def refresh_fx(log=print):
     except Exception as e:
         Ctx.fx_ts = time.time() - 3000  # tenta de novo em ~10min
         log(f"[fx] cotacao indisponivel: {e}")
+
+
+def _sem_nan(o):
+    """Troca NaN/Infinity por null. JSON nao tem esses valores: o json.dumps do
+    Python os emite e o JSON.parse do navegador recusa a resposta INTEIRA."""
+    if isinstance(o, float) and not math.isfinite(o):
+        return None
+    if isinstance(o, dict):
+        return {k: _sem_nan(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_sem_nan(v) for v in o]
+    return o
+
+
+def _json(o) -> str:
+    try:
+        return json.dumps(o, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        return json.dumps(_sem_nan(o), ensure_ascii=False, allow_nan=False)
+
+
+def _rejeita_constante(nome):
+    raise ValueError(f"valor nao permitido em JSON: {nome}")
+
+
+def json_loads_estrito(raw):
+    """json.loads que recusa NaN/Infinity (entrada do /api/config)."""
+    return json.loads(raw, parse_constant=_rejeita_constante)
+
+
+PLANOS = ("pro", "max_5x", "max_20x", "team_standard", "team_premium", "enterprise")
+# campo -> (minimo, maximo, aceita null). Horizonte do veredito entre 15 min e 24 h.
+CONFIG_NUMEROS = {"intended_hours": (0.25, 24, False), "subscription_brl": (0, 1e6, True),
+                  "chatgpt_subscription_brl": (0, 1e6, True), "chatgpt_extra_brl": (0, 1e6, True)}
+
+
+def valida_config(body):
+    """Devolve (mudancas, erro). Um valor invalido gravado no config.json
+    derrubava /api/state ate alguem editar o arquivo a mao."""
+    if not isinstance(body, dict):
+        return None, "corpo precisa ser um objeto JSON"
+    out = {}
+    for k, (lo, hi, nulo) in CONFIG_NUMEROS.items():
+        if k not in body:
+            continue
+        v = body[k]
+        if v is None and nulo:
+            out[k] = None
+            continue
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not lo <= v <= hi:
+            return None, f"{k}: use um numero entre {lo:g} e {hi:g}"
+        out[k] = float(v) if k == "intended_hours" else v
+    if "plan" in body:
+        v = body["plan"]
+        if v is not None and v not in PLANOS:
+            return None, f"plan: use um destes valores ou null: {', '.join(PLANOS)}"
+        out["plan"] = v
+    return out, None
 
 
 # --- montagem do estado ------------------------------------------------------
@@ -558,11 +619,50 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    # --- quem pode falar com o painel ------------------------------------
+    # O servidor so' escuta em 127.0.0.1, mas o NAVEGADOR da propria maquina
+    # e' uma porta de entrada: uma pagina qualquer pode mandar POST para
+    # localhost:8090 (CSRF) e, com DNS rebinding, ate' ler as respostas.
+    # Host fora da lista = 403 em tudo; Origin de outro site = 403 no que
+    # muda estado. Clientes sem Origin (Stream Deck, app nativo, curl) passam.
+
+    def _hosts_permitidos(self):
+        host, port = self.server.server_address[:2]
+        ok = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+        if host not in ("127.0.0.1", "0.0.0.0", "::", "localhost"):
+            ok.add(f"{host}:{port}")
+        return ok
+
+    def _recusa(self, escrita):
+        """None se pode seguir; senao o motivo ('host' ou 'origin')."""
+        permitidos = self._hosts_permitidos()
+        if (self.headers.get("Host") or "").strip().lower() not in permitidos:
+            return "host"
+        origin = self.headers.get("Origin")
+        if escrita and origin is not None:
+            o = origin.strip().lower().rstrip("/")
+            if not (o.startswith("http://") and o[len("http://"):] in permitidos):
+                return "origin"
+        return None
+
+    def _guarda(self, escrita=False) -> bool:
+        motivo = self._recusa(escrita)
+        if motivo:
+            self._send(403, _json({"error": "origem nao permitida", "motivo": motivo}))
+            return False
+        return True
+
     def _serve_dist(self, urlpath):
         """Serve o build do React (web/dist) com fallback SPA para index.html."""
         rel = urlpath.lstrip("/") or "index.html"
         full = os.path.normpath(os.path.join(WEB_DIST, rel))
-        if not full.startswith(WEB_DIST):  # protege contra path traversal
+        # protege contra path traversal: comparar prefixo sem separador deixava
+        # passar qualquer pasta irma cujo nome comece com "dist"
+        try:
+            dentro = os.path.commonpath([WEB_DIST, full]) == os.path.normpath(WEB_DIST)
+        except ValueError:
+            dentro = False
+        if not dentro:
             self._send(403, "forbidden", "text/plain")
             return
         if not os.path.isfile(full):
@@ -579,16 +679,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = self.path.split("?")[0]
+        if not self._guarda(escrita=(p == "/auth/start")):
+            return
         try:
             if p == "/api/health":
-                self._send(200, json.dumps({"app": "ai-usage", "protocol": 1,
-                                            "version": updates.current_version(),
-                                            "features": ["quotas", "brl", "label", "errors", "update", "machines"]}))
+                self._send(200, _json({"app": "ai-usage", "protocol": 1,
+                                       "version": updates.current_version(),
+                                       "features": ["quotas", "brl", "label", "errors", "update", "machines"],
+                                       "db": Ctx.db_path, "token": Ctx.token_path}))
             elif p == "/api/state":
-                self._send(200, json.dumps(build_state(), ensure_ascii=False))
+                self._send(200, _json(build_state()))
             elif p == "/api/total":
-                self._send(200, json.dumps(_with_brl(Ctx.store.total_summary(), fx_rate()),
-                                           ensure_ascii=False))
+                self._send(200, _json(_with_brl(Ctx.store.total_summary(), fx_rate())))
             elif p == "/api/history":
                 fx = fx_rate()
                 out = {
@@ -599,37 +701,63 @@ class Handler(BaseHTTPRequestHandler):
                     "heatmap": [dict(c, avg_cost_brl=_brl(c.get("avg_cost"), fx))
                                 for c in Ctx.store.heatmap_data()],
                 }
-                self._send(200, json.dumps(out, ensure_ascii=False))
+                self._send(200, _json(out))
             elif p == "/auth/start":
                 start_login_thread()
-                self._send(200, json.dumps({"started": True}))
+                self._send(200, _json({"started": True}))
             else:
                 self._serve_dist(p)  # SPA React (web/dist)
         except Exception:
-            self._send(500, json.dumps({"error": traceback.format_exc()}))
+            # o traceback (caminhos, usuario) fica no log, nao na resposta
+            print(f"[http] erro em GET {p}:\n{traceback.format_exc()}")
+            self._send(500, _json({"error": "erro interno do painel; veja o log"}))
+
+    CORPO_MAX = 64 * 1024
+
+    def _corpo_json(self):
+        """Le o corpo como JSON estrito. Devolve (body, erro)."""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in ("application/json", ""):
+            return None, (415, "envie JSON (Content-Type: application/json)")
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None, (400, "Content-Length invalido")
+        if length < 0 or length > self.CORPO_MAX:
+            return None, (413, "corpo grande demais")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json_loads_estrito(raw or b"{}"), None
+        except ValueError as e:
+            return None, (400, f"JSON invalido: {e}")
 
     def do_POST(self):
         p = self.path.split("?")[0]
-        length = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(length) if length else b"{}"
+        if not self._guarda(escrita=True):
+            return
         try:
-            body = json.loads(raw or b"{}")
-        except json.JSONDecodeError:
-            body = {}
+            self._post(p)
+        except Exception:
+            print(f"[http] erro em POST {p}:\n{traceback.format_exc()}")
+            self._send(500, _json({"error": "erro interno do painel; veja o log"}))
+
+    def _post(self, p):
         if p == "/api/config":
+            body, erro = self._corpo_json()
+            if erro:
+                self._send(erro[0], _json({"error": erro[1]}))
+                return
             # refresh_seconds saiu de proposito: o ritmo da API e fixo
             # (POLL_SECONDS) para nao estourar o limite da conta.
-            for key in ("chatgpt_subscription_brl", "chatgpt_extra_brl"):
-                if key in body and (isinstance(body[key], bool) or not isinstance(body[key], (int, float)) or not 0 <= body[key] < float("inf")):
-                    self._send(400, json.dumps({"error": "valor monetario invalido"}))
-                    return
-            for k in ("intended_hours", "subscription_brl", "chatgpt_subscription_brl", "chatgpt_extra_brl", "plan"):
-                if k in body:
-                    Ctx.cfg[k] = body[k]
-            if "chatgpt_extra_brl" in body:
+            mudancas, erro = valida_config(body)
+            if erro:
+                self._send(400, _json({"error": erro}))
+                return
+            Ctx.cfg.update(mudancas)
+            if "chatgpt_extra_brl" in mudancas:
                 Ctx.cfg["chatgpt_extra_month"] = dt.datetime.now().strftime("%Y-%m")
             save_config(Ctx.cfg)
-            self._send(200, json.dumps({"ok": True, "config": Ctx.cfg}))
+            self._send(200, _json({"ok": True, "config": Ctx.cfg}))
         elif p == "/api/refresh":
             # respeita o backoff e um intervalo minimo: o botao Atualizar nao
             # pode virar um jeito de furar o rate limit da conta
@@ -638,12 +766,12 @@ class Handler(BaseHTTPRequestHandler):
             minimo = max(30, min(MANUAL_MIN_INTERVAL_S, _poll_interval() // 2))
             recente = Ctx.last_poll and (agora - Ctx.last_poll) < minimo
             if Ctx.rate_limited and espera > 0:
-                self._send(200, json.dumps({
+                self._send(200, _json({
                     "ok": False, "reason": "rate_limited",
                     "retry_in": int(espera)}))
             elif recente:
                 restante = minimo - (agora - Ctx.last_poll)
-                self._send(200, json.dumps({
+                self._send(200, _json({
                     "ok": False, "reason": "muito_recente",
                     "retry_in": int(restante)}))
             else:
@@ -651,7 +779,7 @@ class Handler(BaseHTTPRequestHandler):
                 if Ctx.codex:
                     Ctx.codex.scan()
                     Ctx.codex.refresh_limits(force=True)
-                self._send(200, json.dumps({"ok": True}))
+                self._send(200, _json({"ok": True}))
         else:
             self._send(404, "not found", "text/plain")
 
@@ -714,13 +842,41 @@ def _db_path():
     return path
 
 
+def _token_dir(db_path):
+    """O token OAuth fica junto do banco (pasta local do usuario), nao na pasta
+    do clone: o clone pode ser sincronizado entre maquinas e, no Windows, a
+    ACL herdada da pasta deixa outras contas lerem o arquivo. Um token.json
+    antigo na pasta do clone e' movido na primeira subida."""
+    if os.environ.get("AI_USAGE_DATA_DIR"):
+        return DATA_DIR
+    novo_dir = os.path.dirname(db_path)
+    novo = os.path.join(novo_dir, "token.json")
+    legado = os.path.join(HERE, "token.json")
+    if novo_dir != HERE and os.path.exists(legado) and not os.path.exists(novo):
+        try:
+            # copia + remove, nao rename: a pasta local costuma estar em outro
+            # disco (clone em E:, perfil em C:) e os.replace nao cruza volumes
+            shutil.copy2(legado, novo)
+            auth.protege_arquivo(novo)
+            os.remove(legado)
+            print(f"[auth] token.json movido de {HERE} para {novo_dir}")
+        except OSError as e:
+            print(f"[auth] nao consegui mover o token.json para {novo_dir}: {e}")
+            return HERE
+    return novo_dir
+
+
 def run(desktop=False, port=None, collect=True):
     Ctx.cfg = load_config()
     if desktop:
         Ctx.cfg.update(host="127.0.0.1", port=port or 8090, open_browser=False)
-    Ctx.store = store_mod.Store(_db_path())
-    Ctx.codex = codex_usage.CodexUsage(_db_path())
-    Ctx.token_store = auth.TokenStore(DATA_DIR)
+    Ctx.db_path = _db_path()
+    Ctx.store = store_mod.Store(Ctx.db_path)
+    Ctx.codex = codex_usage.CodexUsage(Ctx.db_path)
+    Ctx.token_store = auth.TokenStore(_token_dir(Ctx.db_path))
+    Ctx.token_path = Ctx.token_store.path
+    print(f"[painel] banco em {Ctx.db_path}")
+    print(f"[painel] token em {Ctx.token_path}")
     sync_dir = os.environ.get("AI_USAGE_SYNC_DIR") or Ctx.cfg.get("sync_dir")
     if sync_dir:
         Ctx.sync = machines.MachineSync(
