@@ -38,3 +38,4 @@ native-mac/.build/
 
 # Build da proposta do painel de decisao (servido por scripts/servir-proposta.py)
 web/dist-proposta/
+hwmon/bin/

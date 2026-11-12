@@ -51,8 +51,15 @@ jobs:
           python test/test_codex_usage.py
           python test/test_codex_pricing.py
           python test/test_rate_limit.py
+          python test/test_accounts.py
           node streamdeck/test/unified.js
           node streamdeck/test/fake_sd.js
+      - name: Leitor de hardware (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p hwmon/bin
+          swiftc -O hwmon/mac/main.swift -o hwmon/bin/ai-usage-hwmon
+          hwmon/bin/ai-usage-hwmon --once | head -c 200
       - name: Empacotar Python e painel
         run: |
           python -m pip install pyinstaller==6.22.2 certifi
@@ -108,4 +115,4 @@ jobs:
         shell: bash
         run: |
           mapfile -d '' files < <(find release-assets -type f -print0)
-          gh release create "$RELEASE_TAG" "${files[@]}" --repo "$REPO" --title "$RELEASE_TAG — Consumo de IA" --notes-file desktop/RELEASE.md --verify-tag
+          gh release create "$RELEASE_TAG" "${files[@]}" --repo "$REPO" --title "$RELEASE_TAG · Consumo de IA" --notes-file desktop/RELEASE.md --verify-tag

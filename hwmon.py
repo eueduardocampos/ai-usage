@@ -51,6 +51,11 @@ class HardwareMonitor:
         if sys.platform != "darwin":
             return None
         pronto = os.path.join(self.here, "hwmon", "bin", "ai-usage-hwmon")
+        if os.path.isfile(pronto) and not os.access(pronto, os.X_OK):
+            try:
+                os.chmod(pronto, 0o755)  # empacotadores as vezes perdem o +x
+            except OSError:
+                pass
         if os.access(pronto, os.X_OK):
             return pronto
         src = os.path.join(self.here, "hwmon", "mac", "main.swift")
