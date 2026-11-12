@@ -253,7 +253,23 @@ class CodexUsage:
                 hour=0, minute=0, second=0, microsecond=0)
         if scope == "mes":
             return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if scope == "24h":
+            return now - dt.timedelta(hours=24)
+        if scope == "7d":
+            return now - dt.timedelta(days=7)
         return None
+
+    def period_summary(self, scope, local_only=False):
+        """Resumo de um periodo (dia, 24h, 7d, semana, mes, geral). local_only
+        deixa de fora o que veio das outras maquinas."""
+        with self._lock:
+            events = []
+            for _, record in self._files.values():
+                if record.get("model_provider") == "openai" and record["events"]:
+                    events.extend(record["events"])
+            if not local_only:
+                events = events + self.remote_events
+            return self._summarize(events, self._scope_start(scope), self.local_machine)
 
     @staticmethod
     def _summarize(events, start=None, local_machine=None):

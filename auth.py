@@ -92,6 +92,8 @@ def _write_secure_json(path: str, data: dict):
 class TokenStore:
     def __init__(self, token_dir: str):
         self.path = os.path.join(token_dir, "token.json")
+        # so' a conta principal pode nascer do login do Claude Code da maquina
+        self.allow_bootstrap = True
 
     def load(self):
         return _read_json(self.path)
@@ -250,7 +252,7 @@ def get_valid_token(store: TokenStore, allow_bootstrap=True, log=print) -> str:
                     raise TransientAuthError(f"HTTP {e.code} ao renovar") from e
 
     # 3. bootstrap a partir do arquivo do Claude
-    if allow_bootstrap:
+    if allow_bootstrap and getattr(store, "allow_bootstrap", True):
         file_rt = _claude_file_refresh_token()
         if file_rt:
             try:

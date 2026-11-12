@@ -10,6 +10,13 @@ enum AIUsageAPI {
         return try decoder.decode(AppState.self, from: data)
     }
 
+    static func fetchHardware() async throws -> HardwareState {
+        let (data, _) = try await URLSession.shared.data(from: baseURL.appendingPathComponent("api/hardware"))
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(HardwareState.self, from: data)
+    }
+
     /// POST /api/refresh -- o backend recusa se for cedo demais ou se a conta
     /// estiver em rate limit, e devolve o motivo + quantos segundos faltam.
     struct RefreshResult: Decodable {

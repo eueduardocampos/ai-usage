@@ -25,6 +25,7 @@ final class AppStateStore: ObservableObject {
     @Published private(set) var state: AppState?
     @Published private(set) var isOffline = false
     @Published private(set) var lastUpdated: Date?
+    @Published private(set) var hardware: HardwareState?
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -64,6 +65,7 @@ final class AppStateStore: ObservableObject {
             state = try await AIUsageAPI.fetchState()
             isOffline = false
             lastUpdated = Date()
+            hardware = try? await AIUsageAPI.fetchHardware()
         } catch {
             isOffline = true
         }
@@ -84,9 +86,49 @@ final class AppStateStore: ObservableObject {
     var claudeQuotas: [QuotaData] { quotas(for: "claude") }
     var codexQuotas: [QuotaData] { quotas(for: "codex") }
 
+    /// Um cartão por conta. Backend antigo (sem `accounts`) = Claude + Codex.
+    struct AccountCard: Identifiable {
+        let id: String
+        let name: String
+        let provider: String
+        let subtitle: String?
+        let quotas: [QuotaData]
+        let connected: Bool
+    }
+
+    var accountCards: [AccountCard] {
+        guard let accounts = state?.accounts, !accounts.isEmpty else {
+            return [AccountCard(id: "claude", name: "Claude", provider: "claude", subtitle: nil,
+                                quotas: claudeQuotas, connected: state?.authConnected != false),
+                    AccountCard(id: "codex", name: "Codex", provider: "codex", subtitle: nil,
+                                quotas: codexQuotas, connected: true)]
+        }
+        return accounts.map { a in
+            AccountCard(id: a.id, name: a.name, provider: a.provider, subtitle: a.email,
+                        quotas: toQuotaData(a.quotas ?? []),
+                        connected: a.provider == "codex" ? (a.connected ?? false)
+                            : (a.hasToken ?? false) && a.connected != false)
+        }
+    }
+
+    /// Uma linha curta da máquina: "CPU 33% · GPU 60% · Mem 82% · 54 °C".
+    var hardwareText: String? {
+        guard let h = hardware, h.available != false else { return nil }
+        var parts: [String] = []
+        if let v = h.cpu?.usage { parts.append("CPU \(Int(v.rounded()))%") }
+        if let v = h.gpu?.usage { parts.append("GPU \(Int(v.rounded()))%") }
+        if let v = h.memory?.usage { parts.append("Mem \(Int(v.rounded()))%") }
+        if let t = h.cpu?.temp { parts.append("\(Int(t.rounded())) °C") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     private func quotas(for provider: String) -> [QuotaData] {
         guard let quotas = state?.quotas else { return [] }
-        return quotas.filter { $0.provider == provider }.map { q in
+        return toQuotaData(quotas.filter { $0.provider == provider })
+    }
+
+    private func toQuotaData(_ quotas: [Quota]) -> [QuotaData] {
+        return quotas.map { q in
             QuotaData(
                 label: q.label,
                 percent: q.utilization,

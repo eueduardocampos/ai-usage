@@ -5,6 +5,7 @@ struct AccountCardView: View {
     let color: Color
     let quotas: [QuotaData]
     let burnText: String?
+    var subtitle: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -12,6 +13,14 @@ struct AccountCardView: View {
                 Circle().fill(color).frame(width: 8, height: 8)
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
             if quotas.isEmpty {
@@ -27,7 +36,7 @@ struct AccountCardView: View {
             Divider().overlay(AppColors.cardBorder)
 
             HStack {
-                Text("Ritmo agora")
+                Text("Ritmo desta máquina")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 Spacer()

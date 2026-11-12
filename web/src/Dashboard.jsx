@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Chart, registerables } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import { api } from './api';
 import { fmtTokens, fmtMoney, fmtInt } from './format';
 import HeatmapChart from './components/HeatmapChart';
 import './dashboard.css';
+import './shell.css';
+import Hardware, { useHardware } from './Hardware';
+import { AccountCard, AccountsManager, Onboarding } from './Accounts';
+import { WIDGETS, PRESETS, PERIODS, normalizeLayout } from './layout';
 Chart.register(...registerables);
 const ORANGE = '#ef985d',
   GREEN = '#45d6aa';
@@ -221,7 +225,7 @@ function Settings({
   reconnecting
 }) {
   const [message, setMessage] = useState('');
-  return <details className="u-settings"><summary>Assinaturas, conexões e metodologia</summary><form onSubmit={async e => {
+  return <div className="u-settings"><form onSubmit={async e => {
       e.preventDefault();
       const data = new FormData(e.currentTarget);
       const values = {};
@@ -241,257 +245,240 @@ function Settings({
       } catch {
         setMessage('Não foi possível salvar. Tente novamente.');
       }
-    }}><div className="u-settings-grid">{[['subscription_brl', 'Claude · mensalidade'], ['chatgpt_subscription_brl', 'ChatGPT · mensalidade'], ['chatgpt_extra_brl', 'ChatGPT · extras pagos neste mês']].map(([key, label]) => <label key={key}>{label}<input name={key} inputMode="decimal" defaultValue={state.config[key] ?? ''} placeholder="R$ · informe o valor" /></label>)}<button>Salvar valores</button></div><p role="status">{message}</p></form><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a><button type="button" onClick={onReconnect} disabled={reconnecting}>{reconnecting ? 'Abrindo o login…' : 'Reconectar Claude'}</button></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></details>;
+    }}><div className="u-settings-grid">{[['subscription_brl', 'Claude · mensalidade'], ['chatgpt_subscription_brl', 'ChatGPT · mensalidade'], ['chatgpt_extra_brl', 'ChatGPT · extras pagos neste mês']].map(([key, label]) => <label key={key}>{label}<input name={key} inputMode="decimal" defaultValue={state.config[key] ?? ''} placeholder="R$ · informe o valor" /></label>)}<button>Salvar valores</button></div><p role="status">{message}</p></form><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></div>;
 }
+
+// --- casca nova: barra fixa, widgets e configuracoes -------------------------
+
+const PERIOD_LABEL = Object.fromEntries(PERIODS);
+
+function UsageWidget({ usage, fx, period, scope, setScope, multiMachine }) {
+  if (!usage) return <p className="u-hint">Carregando o consumo…</p>;
+  const c = usage.claude || {}, o = usage.codex || {};
+  const cBRL = c.total_cost_brl, oBRL = o.equivalent_brl;
+  const rows = [...(c.by_model || []).map(m => ({ model: m.model, tokens: m.tokens, cost: m.cost_brl, color: ORANGE, provider: 'Claude' })),
+    ...(o.by_model || []).map(m => ({ model: m.model, tokens: m.tokens, cost: m.unpriced_tokens || !fx ? null : m.equivalent_usd * fx, color: GREEN, provider: 'ChatGPT' }))]
+    .sort((a, b) => b.tokens - a.tokens);
+  const max = Math.max(1, ...rows.map(r => r.tokens));
+  return <>
+    <div className="w-usage-top">
+      <div><small>Tokens · {PERIOD_LABEL[period]}</small><div className="u-big">{fmtTokens(usage.total_tokens)}</div></div>
+      <div><small>Se fosse API</small><div className="u-medium">{money(usage.total_brl)}</div></div>
+      <div><small>Claude</small><div className="u-medium" style={{ color: ORANGE }}>{fmtTokens(c.total_tokens)}</div><small>{money(cBRL)}</small></div>
+      <div><small>ChatGPT / Codex</small><div className="u-medium" style={{ color: GREEN }}>{fmtTokens(o.total_tokens)}</div><small>{money(oBRL)}{o.unpriced_tokens ? ' · parcial' : ''}</small></div>
+    </div>
+    <Split a={c.total_tokens || 0} b={o.total_tokens || 0} />
+    {multiMachine && <div className="u-tabs w-scope">{[['local', 'Só esta máquina'], ['all', 'Todas as máquinas']].map(([id, l]) => <button key={id} aria-pressed={scope === id} onClick={() => setScope(id)}>{l}</button>)}</div>}
+    <div className="u-models">{rows.slice(0, 8).map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span style={{ color: r.color }}>● {r.model}</span><small>{fmtTokens(r.tokens)} · {money(r.cost)}</small></div><Meter value={r.tokens / max * 100} color={r.color} /></div>)}</div>
+    {!rows.length && <p className="u-hint">Nenhum uso registrado neste período.</p>}
+    <p className="u-hint">{scope === 'all' ? 'Somando todas as máquinas da pasta sincronizada.' : `Só o que rodou neste computador (${usage.machine}).`} Equivalente = o que custaria pagando por token na API, pelas tarifas padrão.</p>
+  </>;
+}
+
+function CostWidget({ state, cg, fx, now }) {
+  const monthA = state.history?.mes?.total_cost_brl,
+    monthB = fx && cg.history?.mes ? cg.history.mes.equivalent_usd * fx : null;
+  const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
+  const extrasA = state.extra_usage?.used_brl;
+  const openaiExtra = state.config.chatgpt_extra_brl;
+  const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
+  return <>
+    <div className="w-usage-top">
+      <div><small>Investimento mensal</small><div className="u-medium">{money(fixed)}</div><small>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</small></div>
+      <div><small>Equivalente neste mês</small><div className="u-medium">{money(monthA != null && monthB != null ? monthA + monthB : null)}</div><small>{paid && monthB != null ? `${((monthA + monthB) / paid).toFixed(2)}× do custo informado` : 'Informe os valores nas configurações'}</small></div>
+    </div>
+    <div className="u-finance-grid"><Finance label="Claude" color={ORANGE} summary={state.history?.mes} fixed={state.config.subscription_brl} extra={extrasA} fx={fx} now={now} /><Finance label="ChatGPT" color={GREEN} summary={cg.history?.mes} fixed={state.config.chatgpt_subscription_brl} extra={openaiExtra} fx={fx} now={now} openai /></div>
+  </>;
+}
+
+function BurnWidget({ state, cg }) {
+  const burn = [...Object.entries(state.burn_tokph || {}).map(([model, value]) => ({ model, value, color: ORANGE, provider: 'Claude' })),
+    ...Object.entries(cg.burn_by_model || {}).map(([model, value]) => ({ model, value, color: GREEN, provider: 'ChatGPT' }))].sort((a, b) => b.value - a.value);
+  const burnA = burn.filter(r => r.provider === 'Claude').reduce((a, r) => a + r.value, 0), burnB = cg.burn_tokph || 0;
+  return <><div className="u-medium">{fmtTokens(burnA + burnB)}<small> / hora</small></div><Split a={burnA} b={burnB} /><div className="u-models">{burn.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span><i style={{ color: r.color }}>●</i> {r.model} <small>{r.provider}</small></span><strong>{fmtTokens(r.value)}/h</strong></div><Meter value={r.value / Math.max(1, ...burn.map(b => b.value)) * 100} color={r.color} /></div>)}</div>{!burn.length && <p className="u-hint">Sem uso nas últimas 2 horas.</p>}</>;
+}
+
+function ChartsWidget({ history, cg, fx, now }) {
+  const [provider, setProvider] = useState('both');
+  const daily = history?.daily || [], od = cg.daily || [];
+  const dates = [...new Set([...daily, ...od].map(d => d.day))].filter(d => new Date(d + 'T12:00:00').getTime() >= now - 30 * 86400000).sort().slice(-30);
+  const showA = provider !== 'chatgpt', showB = provider !== 'claude';
+  return <>
+    <div className="u-tabs">{[['both', 'Ambas'], ['claude', 'Claude'], ['chatgpt', 'ChatGPT']].map(([id, label]) => <button key={id} aria-pressed={provider === id} onClick={() => setProvider(id)}>{label}</button>)}</div>
+    <div className="u-grid u-two"><div><h4>Tokens por dia · 30 dias</h4><div className="u-chart"><Bar options={options} data={{ labels: dates.map(d => d.slice(5)), datasets: [...(showA ? [{ label: 'Claude', data: dates.map(d => daily.find(r => r.day === d)?.tokens || 0), backgroundColor: ORANGE, borderRadius: 3 }] : []), ...(showB ? [{ label: 'ChatGPT', data: dates.map(d => od.find(r => r.day === d)?.tokens || 0), backgroundColor: GREEN, borderRadius: 3 }] : [])] }} /></div></div>
+      <div><h4>Ritmo por dia e hora</h4><HeatmapChart fx={fx} heatmap={showA ? history?.heatmap : []} chatgpt={showB ? cg.heatmap : []} /></div></div>
+  </>;
+}
+
+function QuotaHistoryWidget({ state, history, cg }) {
+  const limits = (cg.limits || []).flatMap(l => ['primary', 'secondary'].filter(k => l[k]).map(k => ({ key: `${l.id}-${k}`, label: `${l.name || l.id} · ${l[k].window_minutes === 10080 ? '7 dias' : `${l[k].window_minutes / 60} horas`}` })));
+  const rows = (cg.limit_history || []).flatMap(s => s.limits.flatMap(l => ['primary', 'secondary'].filter(k => l[k]).map(k => ({ key: `${l.id}-${k}`, ts: s.ts, value: l[k].used_percent }))));
+  return <div className="u-chart"><Line options={{ ...options, scales: { ...options.scales, x: { ...options.scales.x, type: 'linear', ticks: { color: '#8592a5', maxTicksLimit: 8, callback: v => new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } }, y: { ...options.scales.y, ticks: { color: '#8592a5', callback: v => `${v}%` }, suggestedMin: 0, suggestedMax: 100 } } }}
+    data={{ datasets: [...(state.quotas || []).filter(q => q.provider === 'claude').map((q, index) => ({ label: `Claude · ${q.label}`, data: (history?.snapshots || []).filter(r => r.window === q.source_key).map(r => ({ x: new Date(r.ts).getTime(), y: r.utilization })), borderColor: ORANGE, borderDash: index ? [5, 4] : [], pointRadius: 0 })),
+      ...limits.map((l, index) => ({ label: l.label, data: rows.filter(r => r.key === l.key).map(r => ({ x: new Date(r.ts).getTime(), y: r.value })), borderColor: GREEN, borderDash: index ? [5, 4] : [], pointRadius: 2 }))] }} /></div>;
+}
+
+function WidgetFrame({ w, layout, editing, onChange, children, extra }) {
+  const collapsed = layout.collapsed.includes(w.id);
+  const wide = layout.wide.includes(w.id);
+  const toggle = (key, id) => {
+    const set = new Set(layout[key]);
+    set.has(id) ? set.delete(id) : set.add(id);
+    onChange({ ...layout, [key]: [...set], preset: null });
+  };
+  const move = d => {
+    const vis = layout.order.filter(id => !layout.hidden.includes(id));
+    const i = vis.indexOf(w.id), j = i + d;
+    if (j < 0 || j >= vis.length) return;
+    const order = [...layout.order];
+    const a = order.indexOf(vis[i]), b = order.indexOf(vis[j]);
+    [order[a], order[b]] = [order[b], order[a]];
+    onChange({ ...layout, order, preset: null });
+  };
+  return <section className={`w-frame u-panel${wide ? ' w-wide' : ''}${collapsed ? ' w-collapsed' : ''}`} data-widget={w.id}>
+    <div className="w-head">
+      <h2>{w.title}</h2>{extra}
+      <div className="w-tools">
+        {editing && <>
+          <button title="Subir" onClick={() => move(-1)}>↑</button>
+          <button title="Descer" onClick={() => move(1)}>↓</button>
+          <button title={wide ? 'Meia largura' : 'Largura inteira'} onClick={() => toggle('wide', w.id)}>{wide ? '½' : '↔'}</button>
+          <button title="Esconder" onClick={() => toggle('hidden', w.id)}>✕</button>
+        </>}
+        <button title={collapsed ? 'Expandir' : 'Minimizar'} aria-expanded={!collapsed} onClick={() => toggle('collapsed', w.id)}>{collapsed ? '+' : '–'}</button>
+      </div>
+    </div>
+    {!collapsed && <div className="w-body">{children}</div>}
+  </section>;
+}
+
+function LayoutEditor({ layout, onChange }) {
+  return <div className="d-layout">
+    <h3>Predefinições</h3>
+    <div className="d-presets">{PRESETS.map(p => <button key={p.id} aria-pressed={layout.preset === p.id} onClick={() => onChange({ ...p.layout, preset: p.id })}><strong>{p.name}</strong><small>{p.desc}</small></button>)}</div>
+    <h3>Widgets</h3>
+    <p className="u-hint">Marque o que aparece. Para mudar a ordem e a largura, use "Editar tela" na barra do topo.</p>
+    {layout.order.map(id => { const w = WIDGETS.find(x => x.id === id); return <label key={id} className="d-check"><input type="checkbox" checked={!layout.hidden.includes(id)} onChange={() => { const s = new Set(layout.hidden); s.has(id) ? s.delete(id) : s.add(id); onChange({ ...layout, hidden: [...s], preset: null }); }} /><span><strong>{w.title}</strong><small>{w.hint}</small></span></label>; })}
+  </div>;
+}
+
+function Drawer({ open, onClose, tab, setTab, accounts, reloadAccounts, layout, setLayout, state, save, update }) {
+  if (!open) return null;
+  return <div className="d-overlay" onClick={onClose}><aside className="d-drawer" onClick={e => e.stopPropagation()} aria-label="Configurações">
+    <header><h2>Configurações</h2><button onClick={onClose} aria-label="Fechar">✕</button></header>
+    <div className="u-tabs d-tabs">{[['contas', 'Contas'], ['tela', 'Tela'], ['valores', 'Valores'], ['sobre', 'Sobre']].map(([id, l]) => <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{l}</button>)}</div>
+    <div className="d-body">
+      {tab === 'contas' && <AccountsManager data={accounts} reload={reloadAccounts} />}
+      {tab === 'tela' && <LayoutEditor layout={layout} onChange={setLayout} />}
+      {tab === 'valores' && <Settings state={state} onSave={save} />}
+      {tab === 'sobre' && <SystemLinks update={update} />}
+    </div>
+  </aside></div>;
+}
+
 export default function Dashboard() {
-  const [state, setState] = useState(null),
-    [history, setHistory] = useState(null);
-  const [now, setNow] = useState(() => Date.now()),
-    [error, setError] = useState('');
-  const [scope, setScope] = useState('mes'),
-    [provider, setProvider] = useState('both'),
-    [busy, setBusy] = useState(false),
-    [saving, setSaving] = useState(false),
-    [reconnecting, setReconnecting] = useState(false),
-    // aviso com prazo (motivo do "Atualizar" negado, login aberto...): vive
-    // ate `until`, e o polling de 10s NAO o apaga — so' `error` (conexao) e'
-    // zerado a cada leitura boa
-    [notice, setNotice] = useState(null);
+  const [state, setState] = useState(null), [history, setHistory] = useState(null);
+  const [usage, setUsage] = useState(null), [accounts, setAccounts] = useState(null);
+  const [now, setNow] = useState(() => Date.now()), [error, setError] = useState('');
+  const [period, setPeriod] = useState(() => { try { return localStorage.getItem('aiu.period') || 'dia'; } catch { return 'dia'; } });
+  const [scope, setScope] = useState('local');
+  const [busy, setBusy] = useState(false), [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [drawer, setDrawer] = useState(false), [tab, setTab] = useState('contas');
+  const [editing, setEditing] = useState(false);
+  const [localLayout, setLocalLayout] = useState(null);
+
+  const loadAccounts = useCallback(async () => { try { setAccounts(await api.accounts()); } catch { /* preserva */ } }, []);
   useEffect(() => {
     let alive = true;
-    async function load() {
-      try {
-        const s = await api.state();
-        if (alive) {
-          setState(s);
-          setError('');
-        }
-      } catch {
-        if (alive) setError('Conexão interrompida · exibindo último estado');
-      }
-    }
-    async function hist() {
-      try {
-        const h = await api.history();
-        if (alive) setHistory(h);
-      } catch {/* preserve */}
-    }
-    void load();
-    void hist();
-    const a = setInterval(load, 10000),
-      b = setInterval(hist, 60000),
-      c = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      alive = false;
-      clearInterval(a);
-      clearInterval(b);
-      clearInterval(c);
-    };
-  }, []);
+    const load = async () => { try { const s = await api.state(); if (alive) { setState(s); setError(''); } } catch { if (alive) setError('Conexão interrompida · exibindo último estado'); } };
+    const hist = async () => { try { const h = await api.history(); if (alive) setHistory(h); } catch { /* preserva */ } };
+    void load(); void hist(); void loadAccounts();
+    const a = setInterval(load, 10000), b = setInterval(hist, 60000), c = setInterval(() => setNow(Date.now()), 1000);
+    return () => { alive = false; clearInterval(a); clearInterval(b); clearInterval(c); };
+  }, [loadAccounts]);
+  // contas: rapido enquanto ha login pendente ou o painel de contas esta aberto
+  const waiting = accounts?.accounts?.some(a => a.login?.state === 'waiting');
+  const onboarding = accounts && !accounts.onboarded;
+  useEffect(() => {
+    const t = setInterval(loadAccounts, waiting || drawer || onboarding ? 2000 : 15000);
+    return () => clearInterval(t);
+  }, [loadAccounts, waiting, drawer, onboarding]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.usage(period, scope).then(u => alive && setUsage(u)).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    try { localStorage.setItem('aiu.period', period); } catch { /* sem storage */ }
+    return () => { alive = false; clearInterval(t); };
+  }, [period, scope]);
+
+  const layout = normalizeLayout(localLayout ?? state?.config?.layout);
+  const hwVisible = !layout.hidden.includes('hardware');
+  const hw = useHardware(hwVisible && !!state);
+
+  async function setLayout(next) {
+    setLocalLayout(next);
+    try { await api.setConfig({ layout: next }); setState(await api.state()); setLocalLayout(null); } catch { /* fica local */ }
+  }
   async function refresh() {
     setBusy(true);
     try {
       const r = await api.refresh();
-      setState(await api.state());
-      setHistory(await api.history());
-      if (r?.ok === false) {
-        const why = r.reason === 'rate_limited' ? 'A conta está no limite de consultas da API' : 'Consulta manual muito recente';
-        setNotice({ text: why, until: Date.now() + (r.retry_in || 0) * 1000 });
-      } else setNotice(null);
-    } catch {
-      setNotice({ text: 'Falha ao atualizar; último estado preservado.', until: Date.now() + 15000 });
-    } finally {
-      setBusy(false);
-    }
+      setState(await api.state()); setHistory(await api.history()); void loadAccounts();
+      if (r?.ok === false) setNotice({ text: r.reason === 'rate_limited' ? 'A conta está no limite de consultas da API' : 'Consulta manual muito recente', until: Date.now() + (r.retry_in || 0) * 1000 });
+      else setNotice(null);
+    } catch { setNotice({ text: 'Falha ao atualizar; último estado preservado.', until: Date.now() + 15000 }); } finally { setBusy(false); }
   }
-  async function reconnect() {
-    setReconnecting(true);
-    try {
-      await api.authStart();
-      setNotice({ text: 'Login aberto no navegador: conclua por lá, o painel atualiza sozinho', until: Date.now() + 90000 });
-    } catch {
-      setNotice({ text: 'Não foi possível iniciar a reconexão', until: Date.now() + 15000 });
-    } finally {
-      setReconnecting(false);
-    }
-  }
-  async function save(values) {
-    setSaving(true);
-    try {
-      await api.setConfig(values);
-      setState(await api.state());
-    } finally {
-      setSaving(false);
-    }
-  }
-  const noticeText = notice && notice.until > now
-    ? `${notice.text}${notice.until - now > 2000 ? ` · ${Math.ceil((notice.until - now) / 1000)}s` : ''}` : '';
-  if (!state) return <main className="u-root"><div className="u-wrap"><h1>AI Usage</h1><p role="status">{error ? 'Sem conexão com o painel local (localhost:8090). Confira se o backend está rodando.' : 'Carregando um retrato completo das duas plataformas…'}</p></div></main>;
-  const cg = state.chatgpt || {},
-    fx = state.config.usd_brl;
-  const ca = state.history?.[scope] || {},
-    oa = cg.history?.[scope] || {};
-  const allA = state.history?.geral?.total_tokens || 0,
-    allB = cg.history?.geral?.total_tokens || 0;
-  const burn = [...Object.entries(state.burn_tokph || {}).map(([model, value]) => ({
-    model,
-    value,
-    color: ORANGE,
-    provider: 'Claude'
-  })), ...Object.entries(cg.burn_by_model || {}).map(([model, value]) => ({
-    model,
-    value,
-    color: GREEN,
-    provider: 'ChatGPT'
-  }))].sort((a, b) => b.value - a.value);
-  const burnA = burn.filter(r => r.provider === 'Claude').reduce((a, r) => a + r.value, 0),
-    burnB = cg.burn_tokph || 0;
-  const limits = (cg.limits || []).flatMap(l => ['primary', 'secondary'].filter(k => l[k]).map(k => ({
-    key: `${l.id}-${k}`,
-    label: `${l.name || l.id} · ${l[k].window_minutes === 10080 ? '7 dias' : `${l[k].window_minutes / 60} horas`}`,
-    value: l[k].used_percent,
-    reset: l[k].resets_at,
-    ts: l.snapshot_ts
-  })));
-  const rows = (cg.limit_history || []).flatMap(s => s.limits.flatMap(l => ['primary', 'secondary'].filter(k => l[k]).map(k => ({
-    key: `${l.id}-${k}`,
-    ts: s.ts,
-    value: l[k].used_percent,
-    reset: l[k].resets_at
-  }))));
-  const weekly = limits.find(l => l.key.startsWith('codex-') && l.label.includes('7 dias'));
-  const trend = weekly && quotaTrend(rows, weekly.key, weekly, now);
-  const credit = cg.limits?.find(l => l.credits)?.credits;
-  const openaiExtra = state.config.chatgpt_extra_brl;
-  const modelRows = [...(ca.by_model || []).map(m => ({
-    model: m.model,
-    tokens: m.tokens,
-    color: ORANGE,
-    cost: m.cost_brl,
-    provider: 'Claude'
-  })), ...(oa.by_model || []).map(m => ({
-    ...m,
-    color: GREEN,
-    cost: m.unpriced_tokens || !fx ? null : m.equivalent_usd * fx,
-    provider: 'ChatGPT'
-  }))].sort((a, b) => b.tokens - a.tokens);
-  const daily = history?.daily || [],
-    od = cg.daily || [];
-  const dates = [...new Set([...daily, ...od].map(d => d.day))].filter(d => new Date(d + 'T12:00:00').getTime() >= now - 30 * 86400000).sort().slice(-30);
-  const showA = provider !== 'chatgpt',
-    showB = provider !== 'claude';
-  const monthA = state.history?.mes?.total_cost_brl,
-    monthB = fx && cg.history?.mes ? cg.history.mes.equivalent_usd * fx : null;
-  const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
-  const extrasA = state.extra_usage?.used_brl; // creditos extras sao em USD; used_brl ja vem convertido
-  const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
-  // quotas[] e' o contrato unico do backend: Claude e Codex na mesma forma,
-  // com rotulo, projecao e semaforo prontos (inclui a janela semanal por
-  // modelo, ex. "Fable · 7 dias", que nao existe em state.windows).
-  const allQuotas = (state.quotas || []).map(q => ({
-    key: q.key,
-    label: q.provider === 'claude' ? `Claude · ${q.label}` : q.label,
-    value: q.utilization, reset: q.resets_at, ts: q.snapshot_ts,
-    color: q.provider === 'claude' ? ORANGE : GREEN, status: q.status,
-    trend: q.projected != null && q.rate != null && q.snapshot_ts && now - new Date(q.snapshot_ts) < 900000
-      ? { projected: q.projected, rate: q.rate } : null,
-  }));
-  const activeQuotas = allQuotas.filter(l => l.value !== 0 || !l.ts || now - new Date(l.ts) > 900000);
-  const idleQuotas = allQuotas.filter(l => l.value === 0 && l.ts && now - new Date(l.ts) <= 900000);
-  return <div className="u-root"><main className="u-wrap">
-    <header className="u-top"><div><span className="u-eyebrow"><img src="/brand.svg" alt="AI Usage" width="24" height="24" style={{ display: "inline-block", verticalAlign: "middle", marginRight: 8 }} />AI USAGE / VISÃO UNIFICADA</span><h1>Limites e consumo<span>.</span></h1></div><div className="u-actions"><span className="u-tag">{noticeText || error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span><button onClick={refresh} disabled={busy}>{busy ? 'Atualizando…' : '↻ Atualizar'}</button></div></header>
-    <StatusBanner state={state} offline={!!error} onReconnect={reconnect} reconnecting={reconnecting} />
-    <section className="u-current-windows" aria-label="Consumo atual das janelas">
-      <div className="u-heading"><h2>Janelas em uso</h2><small>Claude em laranja · Codex em verde</small></div>
-      <div className="u-quota-strip">{activeQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div>
-      {!activeQuotas.length && <p>Nenhuma janela com consumo no último snapshot.</p>}
-      <div className="u-window-details">
-        {idleQuotas.length > 0 && <details><summary>{idleQuotas.length} janelas sem consumo · {idleQuotas.map(l => l.label.replace('GPT-5.3-Codex-', '')).join(' / ')}</summary><div className="u-quota-strip">{idleQuotas.map(l => <div key={l.key} style={{ '--provider': l.color }}><Quota {...l} now={now} /></div>)}</div></details>}
-        <details><summary>Detalhes da conta Codex</summary><p>Codex: {cg.limits_error ? 'consulta com falha; exibindo último snapshot' : 'janelas retornadas pela conta'}. Saldo extra: {credit == null ? 'indisponível' : credit.unlimited ? 'ilimitado' : `${credit.balance ?? 'não informado'} créditos`}. Chat comum, imagens e voz não incluídos.</p></details>
+  async function save(values) { setSaving(true); try { await api.setConfig(values); setState(await api.state()); } finally { setSaving(false); } }
+  async function openApp(acc) { try { await api.openApp(acc.id); } catch (e) { setNotice({ text: e.message, until: Date.now() + 8000 }); } }
+
+  if (!state) return <main className="u-root"><div className="u-wrap"><h1>AI Usage</h1><p role="status">{error ? 'Sem conexão com o painel local. Confira se o servidor está rodando.' : 'Carregando…'}</p></div></main>;
+  if (onboarding) return <div className="u-root"><Onboarding data={accounts} reload={loadAccounts} onDone={async () => { await api.onboarded(true); await loadAccounts(); }} /></div>;
+
+  const cg = state.chatgpt || {}, fx = state.config.usd_brl;
+  const noticeText = notice && notice.until > now ? `${notice.text}${notice.until - now > 2000 ? ` · ${Math.ceil((notice.until - now) / 1000)}s` : ''}` : '';
+  const accs = accounts?.accounts || state.accounts || [];
+  const machineName = usage?.machine;
+
+  const content = {
+    hardware: () => <Hardware hw={hw} />,
+    accounts: () => <div className="a-grid">{accs.map(a => <AccountCard key={a.id} acc={a} now={now} onOpen={openApp} />)}</div>,
+    usage: () => <UsageWidget usage={usage} fx={fx} period={period} scope={scope} setScope={setScope} multiMachine={!!state.machines} />,
+    verdict: () => state.switch ? <Verdict sw={state.switch} intended={state.config.intended_hours} onHours={h => save({ intended_hours: h })} saving={saving} /> : <p className="u-hint">Sem leitura da conta principal ainda.</p>,
+    burn: () => <BurnWidget state={state} cg={cg} />,
+    cost: () => <CostWidget state={state} cg={cg} fx={fx} now={now} />,
+    machines: () => state.machines ? <Machines state={state} cg={cg} fx={fx} now={now} /> : <p className="u-hint">Ligue a pasta de sincronização (sync_dir) para somar outras máquinas.</p>,
+    charts: () => <ChartsWidget history={history} cg={cg} fx={fx} now={now} />,
+    'quota-history': () => <QuotaHistoryWidget state={state} history={history} cg={cg} />,
+    system: () => <SystemLinks update={state.update} />,
+  };
+  const extras = {
+    accounts: <button className="w-link" onClick={() => { setTab('contas'); setDrawer(true); }}>Gerenciar contas</button>,
+  };
+  const visible = layout.order.filter(id => !layout.hidden.includes(id));
+
+  return <div className="u-root">
+    <header className="t-bar">
+      <div className="t-brand"><img src="/brand.svg" alt="" width="22" height="22" /><strong>AI Usage</strong></div>
+      <nav className="t-periods" aria-label="Período">{PERIODS.map(([id, l]) => <button key={id} aria-pressed={period === id} onClick={() => setPeriod(id)}>{l}</button>)}</nav>
+      <div className="t-right">
+        <span className="t-machine" tabIndex={0}>ⓘ Consumo desta máquina
+          <span className="t-tip" role="tooltip">Tokens e custo equivalente são medidos nos registros deste computador{machineName ? ` (${machineName})` : ''}. Os limites de 5 horas, 7 dias e por modelo são da conta e já somam todas as máquinas.</span></span>
+        <span className="t-status">{noticeText || error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span>
+        <button onClick={() => setEditing(e => !e)} aria-pressed={editing}>{editing ? 'Concluir' : 'Editar tela'}</button>
+        <button onClick={refresh} disabled={busy} title="Atualizar agora">{busy ? '…' : '↻'}</button>
+        <button className="t-gear" onClick={() => setDrawer(true)} aria-label="Configurações" title="Configurações">⚙</button>
       </div>
-    </section>
-    <Verdict sw={state.switch} intended={state.config.intended_hours} onHours={h => save({ intended_hours: h })} saving={saving} />
-    <div className="u-grid u-overview">
-      <Panel title="Tokens processados" note={state.machines ? `${state.machines.machines.length} máquinas somadas · histórico completo` : 'Registros locais · histórico completo'} className="u-total"><div className="u-big">{fmtInt(allA + allB)}</div><Split a={allA} b={allB} /><p className="u-hint">Inclui entrada, cache e saída. As plataformas têm períodos de histórico diferentes.</p></Panel>
-      <Panel title="Investimento mensal" note="Assinaturas informadas"><div className="u-medium">{money(fixed)}</div><p>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</p><p className="u-hint">Extras são contabilizados separadamente.</p></Panel>
-      <Panel title="Valor equivalente neste mês" note="Estimativa de tokens em API"><div className="u-medium">{money(monthA != null && monthB != null ? monthA + monthB : null)}</div><p>{paid && monthB != null ? `${((monthA + monthB) / paid).toFixed(2)}× do custo total informado` : 'Informe os extras para comparar o custo total.'}</p><p className="u-hint">{cg.history?.mes?.unpriced_tokens ? 'Parcial: há modelos sem preço mapeado e/ou extras não informados.' : 'Tarifas padrão; não representa cobrança.'}</p></Panel>
-    </div>
-    <Machines state={state} cg={cg} fx={fx} now={now} />
-    <div className="u-advice"><span>LEITURA DO MOMENTO</span><p>{weekly ? `Codex: ${pct(weekly.value)} da cota semanal. ` : 'Cota Codex indisponível. '}{trend ? trend.projected >= 100 ? 'O ritmo observado pode esgotar a cota antes do reset; distribua o trabalho entre as plataformas.' : `Projeção de ${pct(trend.projected)} no reset; há margem no ritmo observado.` : 'A projeção ficará disponível após pelo menos 30 minutos de snapshots da mesma janela.'}</p></div>
-    <div className="u-grid u-two"><Panel title="Ritmo por modelo" note="Tokens/h · média das últimas 2 horas"><div className="u-medium">{fmtTokens(burnA + burnB)}<small> / hora</small></div><Split a={burnA} b={burnB} /><div className="u-models">{burn.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span><i style={{
-                    color: r.color
-                  }}>●</i> {r.model} <small>{r.provider}</small></span><strong>{fmtTokens(r.value)}/h</strong></div><Meter value={r.value / Math.max(1, ...burn.map(b => b.value)) * 100} color={r.color} /></div>)}</div></Panel>
-      <Panel title="Retorno das assinaturas" note="Mês atual · equivalência de API"><div className="u-finance-grid"><Finance label="Claude" color={ORANGE} summary={state.history?.mes} fixed={state.config.subscription_brl} extra={extrasA} fx={fx} now={now} /><Finance label="ChatGPT" color={GREEN} summary={cg.history?.mes} fixed={state.config.chatgpt_subscription_brl} extra={openaiExtra} fx={fx} now={now} openai /></div></Panel></div>
-    <Panel title="Comparativo de consumo" note="Semana começa na segunda; cotas usam suas próprias janelas"><div className="u-tabs">{scopes.map(([id, label]) => <button key={id} aria-pressed={scope === id} onClick={() => setScope(id)}>{label}</button>)}</div><div className="u-table-wrap"><table><thead><tr><th>Plataforma</th><th>Tokens</th><th>Participação</th><th>Interações</th><th>Equivalente de API</th></tr></thead><tbody>{[['Claude', ca, ORANGE], ['ChatGPT / Codex', oa, GREEN]].map(([label, data, color], i) => <tr key={label}><td style={{
-                  color
-                }}>● {label}</td><td>{fmtTokens(data.total_tokens)}</td><td>{pct(ca.total_tokens + oa.total_tokens ? data.total_tokens / (ca.total_tokens + oa.total_tokens) * 100 : 0)}</td><td>{fmtInt(data.calls ?? data.total_turns)}</td><td>{money(i ? fx ? data.equivalent_usd * fx : null : data.total_cost_brl)}{i && data.unpriced_tokens > 0 ? ' · parcial' : ''}</td></tr>)}</tbody></table></div><div className="u-models">{modelRows.map(r => <div key={`${r.provider}-${r.model}`}><div className="u-heading"><span style={{
-                color: r.color
-              }}>● {r.model}</span><small>{fmtTokens(r.tokens)} · {money(r.cost)} {r.cost == null ? 'sem preço mapeado' : 'equivalente'}</small></div><Meter value={r.tokens / Math.max(1, ...modelRows.map(m => m.tokens)) * 100} color={r.color} /></div>)}</div><details><summary>Composição dos tokens do Codex</summary><p>Entrada sem cache: {fmtTokens((oa.input_tokens || 0) - (oa.cached_input_tokens || 0))} · cache lido: {fmtTokens(oa.cached_input_tokens)} · saída: {fmtTokens(oa.output_tokens)} · raciocínio dentro da saída: {fmtTokens(oa.reasoning_output_tokens)}.</p></details></Panel>
-    <div className="u-heading u-section-title"><h2>Quando você usa cada plataforma</h2><div className="u-tabs">{[['both', 'Ambas'], ['claude', 'Claude'], ['chatgpt', 'ChatGPT']].map(([id, label]) => <button key={id} aria-pressed={provider === id} onClick={() => setProvider(id)}>{label}</button>)}</div></div>
-    <div className="u-grid u-two"><Panel title="Tokens por dia" note="Últimos 30 dias"><div className="u-chart"><Bar options={options} data={{
-              labels: dates.map(d => d.slice(5)),
-              datasets: [...(showA ? [{
-                label: 'Claude',
-                data: dates.map(d => daily.find(r => r.day === d)?.tokens || 0),
-                backgroundColor: ORANGE,
-                borderRadius: 3
-              }] : []), ...(showB ? [{
-                label: 'ChatGPT',
-                data: dates.map(d => od.find(r => r.day === d)?.tokens || 0),
-                backgroundColor: GREEN,
-                borderRadius: 3
-              }] : [])]
-            }} /></div></Panel><Panel title="Ritmo por dia e hora" note="Média por hora ativa · histórico local"><HeatmapChart fx={fx} heatmap={showA ? history?.heatmap : []} chatgpt={showB ? cg.heatmap : []} /><p className="u-hint">As duas cores usam a mesma escala de tokens. Passe o mouse para comparar os volumes.</p></Panel></div>
-    <Panel title="Evolução das cotas" note="Últimas 48 horas · percentuais oficiais"><div className="u-chart"><Line options={{
-            ...options,
-            scales: {
-              ...options.scales,
-              x: {
-                ...options.scales.x,
-                type: 'linear',
-                ticks: {
-                  color: '#8592a5',
-                  maxTicksLimit: 8,
-                  callback: v => new Date(v).toLocaleString('pt-BR', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })
-                }
-              },
-              y: {
-                ...options.scales.y,
-                ticks: {
-                  color: '#8592a5',
-                  callback: v => `${v}%`
-                },
-                suggestedMin: 0,
-                suggestedMax: 100
-              }
-            }
-          }} data={{
-            datasets: [...(showA ? (state.quotas || []).filter(q => q.provider === 'claude').map((q, index) => ({
-              label: `Claude · ${q.label}`,
-              data: (history?.snapshots || []).filter(r => r.window === q.source_key).map(r => ({
-                x: new Date(r.ts).getTime(),
-                y: r.utilization
-              })),
-              borderColor: ORANGE,
-              borderDash: index ? [5, 4] : [],
-              pointRadius: 0
-            })) : []), ...(showB ? limits.map((l, index) => ({
-              label: l.label,
-              data: rows.filter(r => r.key === l.key).map(r => ({
-                x: new Date(r.ts).getTime(),
-                y: r.value
-              })),
-              borderColor: GREEN,
-              borderDash: index ? [5, 4] : [],
-              pointRadius: 2
-            })) : [])]
-          }} /></div></Panel>
-    <SystemLinks update={state.update} />
-    <Settings state={state} onSave={save} onReconnect={reconnect} reconnecting={reconnecting} /><footer className="u-footer">Dados locais · {cg.ignored_imported_sessions || 0} sessões importadas separadas · câmbio {money(fx)}/US$ · cotas oficiais, valores de API estimados</footer>
-  </main></div>;
+    </header>
+    <main className="u-wrap t-main">
+      <StatusBanner state={state} offline={!!error} onReconnect={() => { setTab('contas'); setDrawer(true); }} reconnecting={false} />
+      {editing && <div className="t-editing">Modo de edição: use ↑ ↓ para mover, ↔ para largura e ✕ para esconder. Para voltar algo escondido, abra Configurações › Tela.</div>}
+      <div className="w-grid">
+        {visible.map(id => { const w = WIDGETS.find(x => x.id === id); return <WidgetFrame key={id} w={w} layout={layout} editing={editing} onChange={setLayout} extra={extras[id]}>{content[id]()}</WidgetFrame>; })}
+      </div>
+      <footer className="u-footer">Dados locais · câmbio {money(fx)}/US$ · limites oficiais das contas, valores de API estimados</footer>
+    </main>
+    <Drawer open={drawer} onClose={() => setDrawer(false)} tab={tab} setTab={setTab} accounts={accounts} reloadAccounts={loadAccounts} layout={layout} setLayout={setLayout} state={state} save={save} update={state.update} />
+  </div>;
 }

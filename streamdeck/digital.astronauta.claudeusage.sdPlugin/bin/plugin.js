@@ -19,6 +19,7 @@ const { spawn } = require("child_process");
 const { MiniWebSocket } = require("./ws");
 const R = require("./render");
 const U = require("./unified");
+const V5 = require("./v5");
 
 // ---------------------------------------------------------------- argumentos
 
@@ -68,6 +69,10 @@ const AI_DIALS = ['aiwindows','aiburn','aicosts','aitotals'];
 for (const metric of AI_KEYS) ACTION_PRESETS[`${NS}.${metric}`] = {metric,mode:'auto'};
 for (const dial of AI_DIALS) ACTION_PRESETS[`${NS}.${dial}`] = {dial};
 
+// v5: varias contas + maquina
+const A_APP = `${NS}.acctapp`, A_QUOTA = `${NS}.acctquota`, A_MACHINE = `${NS}.machine`;
+const V5_ACTIONS = [A_APP, A_QUOTA, A_MACHINE];
+
 // ---------------------------------------------------------------- config
 
 const WINDOW_META = {
@@ -110,6 +115,8 @@ let sd = null;
 const contexts = new Map(); // context -> { action, controller, settings }
 let latest = null; // /api/state
 let latestTotal = null; // /api/total
+let latestHw = null; // /api/hardware
+let hwTimer = null;
 let lastError = null;
 let pollTimer = null;
 let flickerTimer = null;
@@ -576,6 +583,15 @@ function render(context) {
   const entry = contexts.get(context);
   if (!entry) return;
 
+  if (V5_ACTIONS.includes(entry.action)) {
+    const s = entry.settings || {};
+    const v = entry.action === A_MACHINE ? V5.hwView(latestHw, s)
+      : entry.action === A_APP ? V5.appView(latest, s) : V5.quotaView(latest, s);
+    if (entry.controller === "Encoder") setFeedback(context, { canvas: R.toDataUri(R.clean(v, true)) });
+    else { setImage(context, R.clean(v)); setTitle(context, ""); }
+    return;
+  }
+
   if (entry.controller === "Encoder") {
     setFeedback(context, dialFeedback(context));
     return;
@@ -676,10 +692,14 @@ function fetchState() {
 
 /** POST /api/config — usado pelo dial de horizonte. */
 function postConfig(body, cb) {
+  postJSON("/api/config", body, cb);
+}
+
+function postJSON(path, body, cb) {
   const data = JSON.stringify(body || {});
   let u;
   try {
-    u = new URL(`${baseUrl()}/api/config`);
+    u = new URL(`${baseUrl()}${path}`);
   } catch {
     if (cb) cb(new Error("panelUrl invalida"));
     return;
@@ -695,7 +715,7 @@ function postConfig(body, cb) {
     },
     (res) => {
       res.resume();
-      res.on("end", () => cb && cb(null));
+      res.on("end", () => cb && cb(res.statusCode >= 400 ? new Error(`HTTP ${res.statusCode}`) : null));
     }
   );
   req.on("timeout", () => req.destroy(new Error("timeout")));
@@ -704,7 +724,76 @@ function postConfig(body, cb) {
   req.end();
 }
 
+function fetchHw() {
+  getJSON("/api/hardware", (err, data) => {
+    latestHw = err ? null : data;
+    for (const [c, e] of contexts.entries()) if (e.action === A_MACHINE) render(c);
+  });
+}
+
+function restartHw() {
+  const precisa = [...contexts.values()].some(e => e.action === A_MACHINE);
+  if (precisa && !hwTimer) {
+    fetchHw();
+    hwTimer = setInterval(fetchHw, 2000);
+  } else if (!precisa && hwTimer) {
+    clearInterval(hwTimer);
+    hwTimer = null;
+  }
+}
+
+function saveSettings(context, changes) {
+  const entry = contexts.get(context);
+  if (!entry) return;
+  entry.settings = { ...(entry.settings || {}), ...changes };
+  send({ event: "setSettings", context, payload: entry.settings });
+  render(context);
+}
+
+/** Clique/aperto das acoes v5. Devolve true se tratou. */
+function v5Press(context) {
+  const entry = contexts.get(context);
+  if (!entry || !V5_ACTIONS.includes(entry.action)) return false;
+  const s = entry.settings || {};
+  if (entry.action === A_QUOTA) {
+    saveSettings(context, { mode: ((s.mode | 0) + 1) % V5.QUOTA_MODES.length });
+  } else if (entry.action === A_MACHINE) {
+    saveSettings(context, { viewIdx: (s.viewIdx | 0) + 1 });
+  } else if (entry.action === A_APP) {
+    const id = s.accountId || "principal";
+    postJSON(`/api/accounts/${encodeURIComponent(id)}/open`, {}, (err) => {
+      if (err) showAlert(context);
+    });
+  }
+  return true;
+}
+
+function v5Rotate(context, ticks) {
+  const entry = contexts.get(context);
+  if (!entry || entry.action !== A_MACHINE) return false;
+  const s = entry.settings || {};
+  const n = V5.COMPONENTS.length;
+  const atual = V5.COMPONENTS.includes(s.component) ? V5.COMPONENTS.indexOf(s.component) : (s.compIdx | 0);
+  saveSettings(context, { component: V5.COMPONENTS[(((atual + ticks) % n) + n) % n], compIdx: undefined });
+  return true;
+}
+
+/** Inspector pede a lista de contas (ele nao consegue ler o localhost sozinho). */
+function answerInspector(context, action) {
+  const contas = V5.accountsOf(latest).map(a => ({ id: a.id, name: a.name, provider: a.provider, app_name: a.app_name, connected: a.connected }));
+  send({
+    event: "sendToPropertyInspector", context, action,
+    payload: {
+      contas,
+      componentes: V5.COMPONENTS.map(id => ({ id, name: V5.COMPONENT_NAME[id] })),
+      janelas: V5.WINDOWS.map(([id, , name]) => ({ id, name })),
+      online: !!latest,
+    },
+  });
+}
+
 function restartPolling() {
+  restartHw();
   if (pollTimer) clearInterval(pollTimer);
   if (contexts.size === 0) {
     pollTimer = null;
@@ -857,17 +946,27 @@ function connect() {
       }
 
       case "dialRotate":
+        if (v5Rotate(context, payload?.ticks > 0 ? 1 : -1)) break;
         onRotate(context, payload?.ticks > 0 ? 1 : -1);
         break;
 
       case "touchTap":
+        if (v5Press(context)) break;
         fetchState();
         showOk(context);
         break;
 
       case "keyDown":
       case "dialDown":
+        if (v5Press(context)) break;
         openPanel(context);
+        break;
+
+      case "sendToPlugin":
+        if (payload && payload.pedido === "contas") {
+          if (latest) answerInspector(context, action);
+          else fetchState(), setTimeout(() => answerInspector(context, action), 1500);
+        }
         break;
 
       default:
@@ -897,5 +996,6 @@ module.exports = {
   applyGlobal,
   ACTION_PRESETS,
   __setLatest: (v) => (latest = v),
+  __setHw: (v) => (latestHw = v),
   __setTotal: (v) => (latestTotal = v),
 };

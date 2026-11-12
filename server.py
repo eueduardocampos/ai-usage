@@ -18,8 +18,10 @@ import urllib.request
 from datetime import timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import accounts as accounts_mod
 import auth
 import codex_usage
+import hwmon
 import forecast
 import machines
 import store as store_mod
@@ -41,6 +43,12 @@ _CODEX_SHORT = re.compile(r"^gpt-[\d.]+-codex-(.+)$", re.IGNORECASE)
 
 
 class Ctx:
+    # Ctx tambem e' o estado de leitura da conta PRINCIPAL do Claude (mesmos
+    # campos de accounts.Runtime); as outras contas tem um Runtime proprio.
+    id = accounts_mod.PRINCIPAL
+    accounts = None  # accounts.AccountManager
+    logins = None    # accounts.LoginBroker
+    hw = None        # hwmon.HardwareMonitor
     store = None
     codex = None
     sync = None      # machines.MachineSync quando sync_dir esta configurado
@@ -152,6 +160,25 @@ def valida_config(body):
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not lo <= v <= hi:
             return None, f"{k}: use um numero entre {lo:g} e {hi:g}"
         out[k] = float(v) if k == "intended_hours" else v
+    if "layout" in body:
+        v = body["layout"]
+        if v is None:
+            out["layout"] = None
+        else:
+            if not isinstance(v, dict):
+                return None, "layout precisa ser um objeto"
+            lay = {}
+            for k in ("order", "hidden", "collapsed", "wide"):
+                lst = v.get(k, [])
+                if not isinstance(lst, list) or len(lst) > 40 or not all(
+                        isinstance(i, str) and re.fullmatch(r"[a-z0-9_-]{1,30}", i) for i in lst):
+                    return None, f"layout.{k}: lista de ids curtos"
+                lay[k] = lst
+            preset = v.get("preset")
+            if preset is not None and not (isinstance(preset, str) and re.fullmatch(r"[a-z0-9_-]{1,30}", preset)):
+                return None, "layout.preset invalido"
+            lay["preset"] = preset
+            out["layout"] = lay
     if "plan" in body:
         v = body["plan"]
         if v is not None and v not in PLANOS:
@@ -192,7 +219,13 @@ def _with_brl(summary: dict, fx) -> dict:
     return out
 
 
-def _claude_states(latest, hourly_profile) -> dict:
+def _kw(rt):
+    """Argumento de conta para o store. A principal nao passa nada (mantem a
+    assinatura antiga, que testes e chamadas legadas usam)."""
+    return {} if rt is Ctx or rt is None else {"account": rt.id}
+
+
+def _claude_states(latest, hourly_profile, rt=None) -> dict:
     """Projecao + semaforo de TODAS as janelas do ultimo snapshot, inclusive
     as por modelo (seven_day_model:*) e as sem dado (viram INDETERMINADO em
     vez de sumir)."""
@@ -200,7 +233,7 @@ def _claude_states(latest, hourly_profile) -> dict:
     for key, wd in ((latest or {}).get("windows") or {}).items():
         hrs = usage_api.window_hours_for(key)
         util = wd.get("utilization")
-        snap_rate = Ctx.store.snapshot_rate(key) if util is not None else None
+        snap_rate = Ctx.store.snapshot_rate(key, **_kw(rt)) if util is not None else None
         st = forecast.smart_project_window(util, wd.get("resets_at"), hrs,
                                            hourly_profile, snap_rate=snap_rate)
         st["label"] = wd.get("label") or WINDOW_LABELS.get(key) or key
@@ -313,28 +346,8 @@ def _quotas(claude_states, codex_states, snapshot_ts) -> list:
     return items
 
 
-def build_state() -> dict:
-    cfg = Ctx.cfg
-    fx = fx_rate()
-    latest = Ctx.store.latest_state()
-    hourly_profile = Ctx.store.hour_of_day_avg()
-    states = _claude_states(latest, hourly_profile)
-    # /api/state.windows continua com a forma antiga (so chaves classicas com
-    # valor numerico): e' o que Tauri e Stream Deck ja publicados esperam.
-    windows_out = {k: st for k, st in states.items()
-                   if k in LEGACY_WINDOW_KEYS and st.get("utilization") is not None}
-    chatgpt = Ctx.codex.state() if Ctx.codex else None
-    quotas = _quotas(states, _codex_states(chatgpt), latest["ts"] if latest else None)
-
-    burn = Ctx.store.recent_tokph(2)
-    burn_src = Ctx.store.recent_burn_by_source(2)
-    dominant = max(burn, key=burn.get) if burn else None
-    verdict = (forecast.switch_verdict(
-        states, dominant, cfg.get("intended_hours", 2.0),
-        target=cfg.get("switch_target"),
-        candidates={k for k in (forecast._model_key(m) for m in burn) if k})
-        if windows_out else None)
-
+def _extra_usage(latest, states, fx, cfg, rt=None):
+    """Creditos extras (alem da licenca) de uma conta do Claude."""
     extra = None
     if latest and latest.get("extra_usage"):
         eu = latest["extra_usage"]
@@ -353,7 +366,7 @@ def build_state() -> dict:
         extra["limit_brl"] = to_brl(extra["limit"])
         # licenca x extras: mede pelo historico de used_credits dos snapshots
         try:
-            series = Ctx.store.extra_credit_series(24)
+            series = Ctx.store.extra_credit_series(24, **_kw(rt))
         except Exception:
             series = []
         rate = spent_24h = None
@@ -382,6 +395,33 @@ def build_state() -> dict:
                       "rate_per_hour_brl": to_brl(rate),
                       "spent_24h_brl": to_brl(spent_24h),
                       "burning": burning})
+
+    return extra
+
+
+def build_state() -> dict:
+    cfg = Ctx.cfg
+    fx = fx_rate()
+    latest = Ctx.store.latest_state()
+    hourly_profile = Ctx.store.hour_of_day_avg()
+    states = _claude_states(latest, hourly_profile)
+    # /api/state.windows continua com a forma antiga (so chaves classicas com
+    # valor numerico): e' o que Tauri e Stream Deck ja publicados esperam.
+    windows_out = {k: st for k, st in states.items()
+                   if k in LEGACY_WINDOW_KEYS and st.get("utilization") is not None}
+    chatgpt = Ctx.codex.state() if Ctx.codex else None
+    quotas = _quotas(states, _codex_states(chatgpt), latest["ts"] if latest else None)
+
+    burn = Ctx.store.recent_tokph(2)
+    burn_src = Ctx.store.recent_burn_by_source(2)
+    dominant = max(burn, key=burn.get) if burn else None
+    verdict = (forecast.switch_verdict(
+        states, dominant, cfg.get("intended_hours", 2.0),
+        target=cfg.get("switch_target"),
+        candidates={k for k in (forecast._model_key(m) for m in burn) if k})
+        if windows_out else None)
+
+    extra = _extra_usage(latest, states, fx, cfg)
 
     history = {sc: _with_brl(Ctx.store.scope_summary(sc), fx)
                for sc in ("geral", "mes", "semana", "dia")}
@@ -416,6 +456,7 @@ def build_state() -> dict:
         "machines": Ctx.sync.info() if Ctx.sync else None,
         "chatgpt": chatgpt,
         "plan": plan,
+        "accounts": _accounts_state(fx, chatgpt) if Ctx.accounts else None,
         "update": updates.state(),
         "config": {"refresh_seconds": _poll_interval(),
                    "intended_hours": cfg.get("intended_hours"),
@@ -423,21 +464,88 @@ def build_state() -> dict:
                    "usd_brl": fx,
                    "subscription_brl": cfg.get("subscription_brl"),
                    "chatgpt_subscription_brl": cfg.get("chatgpt_subscription_brl"),
+                   "layout": cfg.get("layout"),
                    "chatgpt_extra_brl": cfg.get("chatgpt_extra_brl") if cfg.get("chatgpt_extra_month") == dt.datetime.now().strftime("%Y-%m") else None},
     }
 
 
+def _email(profile):
+    acct = (profile or {}).get("account") or {}
+    return acct.get("email") or acct.get("email_address")
+
+
+def _account_summary(acc, fx=None, chatgpt=None, full=True):
+    """Uma conta no formato unico do painel, Stream Deck e app nativo."""
+    out = {"id": acc["id"], "provider": acc["provider"], "name": acc["name"],
+           "app": acc.get("app"),
+           "app_name": os.path.basename(acc["app"])[:-4] if (acc.get("app") or "").endswith(".app")
+           else (os.path.basename(acc["app"]) if acc.get("app") else None)}
+    if acc["provider"] == "claude":
+        rt = Ctx.accounts.runtime(acc["id"])
+        org = (rt.profile or {}).get("organization") or {}
+        login = Ctx.logins.state_of(acc["id"]) if Ctx.logins else None
+        has_token = bool(rt.token_store and rt.token_store.load())
+        out.update({
+            "connected": bool(rt.auth_connected),
+            "has_token": has_token,
+            "rate_limited": rt.rate_limited,
+            "last_error": rt.last_error,
+            "email": _email(rt.profile),
+            "org_name": org.get("name"),
+            "plan": detect_plan(rt.profile),
+            "login": login,
+            "snapshot_ts": None,
+            "quotas": [],
+        })
+        if full:
+            latest = Ctx.store.latest_state(**_kw(rt))
+            states = _claude_states(latest, Ctx.store.hour_of_day_avg(), rt)
+            out["snapshot_ts"] = latest["ts"] if latest else None
+            out["quotas"] = _quotas(states, [], out["snapshot_ts"])
+            out["extra_usage"] = _extra_usage(latest, states, fx, Ctx.cfg, rt)
+    else:
+        cg = chatgpt if chatgpt is not None else (Ctx.codex.state() if (full and Ctx.codex) else None)
+        limits = (cg or {}).get("limits") or []
+        out.update({
+            "connected": bool(limits),
+            "has_token": bool(limits),
+            "rate_limited": False,
+            "last_error": (cg or {}).get("limits_error"),
+            "email": None,
+            "plan": (limits[0].get("plan_type") if limits else None),
+            "login": None,
+            "quotas": _quotas({}, _codex_states(cg), None) if (full and cg) else [],
+        })
+    return out
+
+
+def _accounts_state(fx=None, chatgpt=None, full=True):
+    lst = [_account_summary(a, fx, chatgpt, full) for a in Ctx.accounts.accounts]
+    # mesmo e-mail em duas contas = login feito no navegador errado
+    vistos = {}
+    for a in lst:
+        if a.get("email"):
+            vistos.setdefault(a["email"].lower(), []).append(a["id"])
+    for a in lst:
+        a["duplicate_of"] = None
+        if a.get("email"):
+            outros = [i for i in vistos[a["email"].lower()] if i != a["id"]]
+            a["duplicate_of"] = outros[0] if outros else None
+    return lst
+
+
 # --- poller ------------------------------------------------------------------
 
-def refresh_profile(log=print):
+def refresh_profile(log=print, rt=None):
     """Perfil da conta, cacheado por 6h — muda raramente."""
-    if time.time() - Ctx.profile_ts < 6 * 3600:
+    rt = rt or Ctx
+    if time.time() - rt.profile_ts < 6 * 3600:
         return
     try:
-        Ctx.profile = usage_api.fetch_profile(Ctx.token_store, log=log)
-        Ctx.profile_ts = time.time()
+        rt.profile = usage_api.fetch_profile(rt.token_store, log=log)
+        rt.profile_ts = time.time()
     except Exception as e:
-        Ctx.profile_ts = time.time() - 5.5 * 3600  # tenta de novo em ~30min
+        rt.profile_ts = time.time() - 5.5 * 3600  # tenta de novo em ~30min
         log(f"[profile] indisponivel: {e}")
 
 
@@ -459,23 +567,24 @@ def detect_plan(profile):
     return None
 
 
-def _retry_after_falha():
+def _retry_after_falha(rt=None):
     """Quanto esperar depois de uma falha que NAO e rate limit.
 
     Enquanto nunca houve uma leitura boa, a causa provavel e ambiente (rede ou
     disco ainda subindo depois do boot), nao credencial morta — entao tenta de
     novo rapido, dobrando ate o ritmo normal. Se a credencial estiver mesmo
     morta, converge para 5 min em vez de martelar."""
-    if Ctx.last_poll is None:
-        Ctx.boot_retries += 1
-        return min(POLL_COLD, 15 * (2 ** (Ctx.boot_retries - 1)))
+    rt = rt or Ctx
+    if rt.last_poll is None:
+        rt.boot_retries += 1
+        return min(POLL_COLD, 15 * (2 ** (rt.boot_retries - 1)))
     return POLL_COLD
 
 
-def _poll_interval():
+def _poll_interval(rt=None):
     """Escolhe o ritmo pelo pico de utilizacao do ultimo snapshot."""
     try:
-        latest = Ctx.store.latest_state()
+        latest = Ctx.store.latest_state(**_kw(rt))
         janelas = (latest or {}).get("windows") or {}
         pico = max((w.get("utilization") or 0) for w in janelas.values()) if janelas else 0
     except Exception:
@@ -487,18 +596,19 @@ def _poll_interval():
     return POLL_COLD
 
 
-def _schedule_backoff(retry_after=None):
+def _schedule_backoff(retry_after=None, rt=None):
     """Espera crescente depois de um 429, respeitando o Retry-After do servidor."""
-    Ctx.rate_limit_hits += 1
-    espera = POLL_SECONDS * (2 ** (Ctx.rate_limit_hits - 1))
+    rt = rt or Ctx
+    rt.rate_limit_hits += 1
+    espera = POLL_SECONDS * (2 ** (rt.rate_limit_hits - 1))
     if retry_after:
         espera = max(espera, float(retry_after))
     espera = min(BACKOFF_MAX_S, espera)
-    Ctx.next_poll_at = time.time() + espera
+    rt.next_poll_at = time.time() + espera
     return espera
 
 
-def poll_once(log=print):
+def poll_once(log=print, rt=None):
     """Escaneia logs e grava um snapshot da API.
 
     Regra central: 429 NAO e desconexao. O token segue valido; o que houve foi
@@ -508,68 +618,93 @@ def poll_once(log=print):
     if not _poll_lock.acquire(blocking=False):
         log("[poll] ja existe uma leitura em andamento, pulando")
         return
+    rt = rt or Ctx
+    principal = rt is Ctx
     try:
-        refresh_fx(log)
-        refresh_profile(log)
-        updates.check(log=log)
+        if principal:
+            refresh_fx(log)
+            updates.check(log=log)
+            try:
+                Ctx.store.scan(log=lambda *a: None)
+            except Exception as e:
+                log(f"[poll:{rt.id}] scan falhou: {e}")
+        if rt.token_store is not None and rt.token_store.load() is None and not principal:
+            # conta extra ainda sem login: nao ha o que ler
+            rt.auth_connected = False
+            rt.last_error = None
+            rt.next_poll_at = time.time() + 30
+            return
+        refresh_profile(log, rt)
         try:
-            Ctx.store.scan(log=lambda *a: None)
-        except Exception as e:
-            log(f"[poll] scan falhou: {e}")
-        try:
-            raw = usage_api.fetch_usage(Ctx.token_store, log=log)
+            raw = usage_api.fetch_usage(rt.token_store, log=log)
             norm = usage_api.normalize(raw)
-            Ctx.store.insert_snapshot(norm)
-            if not Ctx.ignored_logged and (norm.get("ignored_keys") or norm.get("ignored_limits")):
+            Ctx.store.insert_snapshot(norm, **_kw(rt))
+            if not rt.ignored_logged and (norm.get("ignored_keys") or norm.get("ignored_limits")):
                 # uma vez por boot: o que a API mandou e nao virou cota. Foi a
                 # falta disto que escondeu a janela por modelo por semanas.
                 log(f"[usage] chaves da API que nao viram cota: {norm.get('ignored_keys')}; "
                     f"limits[] ignorados: {norm.get('ignored_limits')}")
-                Ctx.ignored_logged = True
-            Ctx.auth_connected = True
-            Ctx.rate_limited = False
-            Ctx.rate_limit_hits = 0
-            Ctx.last_error = None
-            Ctx.last_error_detail = None
-            Ctx.last_poll = time.time()
-            Ctx.boot_retries = 0
-            Ctx.next_poll_at = time.time() + _poll_interval()
+                rt.ignored_logged = True
+            rt.auth_connected = True
+            rt.rate_limited = False
+            rt.rate_limit_hits = 0
+            rt.last_error = None
+            rt.last_error_detail = None
+            rt.last_poll = time.time()
+            rt.boot_retries = 0
+            rt.next_poll_at = time.time() + _poll_interval(rt)
         except usage_api.RateLimited as e:
             # transitorio: preserva auth_connected e o ultimo snapshot bom
-            espera = _schedule_backoff(e.retry_after)
-            Ctx.rate_limited = True
-            Ctx.last_error = (
+            espera = _schedule_backoff(e.retry_after, rt)
+            rt.rate_limited = True
+            rt.last_error = (
                 f"Limite de requisições da conta; nova tentativa em {int(espera)}s.")
-            Ctx.last_error_detail = f"RateLimited: retry_after={e.retry_after}"
-            log(f"[poll] 429 ({Ctx.rate_limit_hits}x), aguardando {int(espera)}s")
+            rt.last_error_detail = f"RateLimited: retry_after={e.retry_after}"
+            log(f"[poll:{rt.id}] 429 ({rt.rate_limit_hits}x), aguardando {int(espera)}s")
         except auth.TransientAuthError as e:
-            espera = _schedule_backoff()
-            Ctx.rate_limited = True
-            Ctx.last_error = f"Renovação do token adiada; nova tentativa em {int(espera)}s."
-            Ctx.last_error_detail = f"TransientAuthError: {e}"
-            log(f"[poll] falha transitoria ao renovar: {e}")
+            espera = _schedule_backoff(rt=rt)
+            rt.rate_limited = True
+            rt.last_error = f"Renovação do token adiada; nova tentativa em {int(espera)}s."
+            rt.last_error_detail = f"TransientAuthError: {e}"
+            log(f"[poll:{rt.id}] falha transitoria ao renovar: {e}")
         except auth.AuthError as e:
-            Ctx.auth_connected = False
-            Ctx.rate_limited = False
-            Ctx.last_error = "Conta desconectada: é preciso reconectar."
-            Ctx.last_error_detail = f"AuthError: {e}"
-            Ctx.next_poll_at = time.time() + _retry_after_falha()
-            log(f"[poll] sem token valido: {e}")
+            rt.auth_connected = False
+            rt.rate_limited = False
+            rt.last_error = "Conta desconectada: é preciso reconectar."
+            rt.last_error_detail = f"AuthError: {e}"
+            rt.next_poll_at = time.time() + _retry_after_falha(rt)
+            log(f"[poll:{rt.id}] sem token valido: {e}")
         except Exception as e:
             # rede/servidor: nao mexe em auth_connected, so tenta mais tarde
-            espera = _retry_after_falha()
-            Ctx.last_error, Ctx.last_error_detail = errors.humanize(e, retry_in=espera)
-            Ctx.next_poll_at = time.time() + espera
-            log(f"[poll] erro: {Ctx.last_error_detail}")
+            espera = _retry_after_falha(rt)
+            rt.last_error, rt.last_error_detail = errors.humanize(e, retry_in=espera)
+            rt.next_poll_at = time.time() + espera
+            log(f"[poll:{rt.id}] erro: {rt.last_error_detail}")
     finally:
         _poll_lock.release()
+
+
+def _runtimes():
+    if not Ctx.accounts:
+        return [Ctx]
+    return [Ctx.accounts.runtime(a["id"]) for a in Ctx.accounts.claude_accounts()]
 
 
 def poller_loop():
     while True:
         time.sleep(5)
-        if time.time() >= Ctx.next_poll_at:
-            poll_once()
+        for rt in _runtimes():
+            if rt and time.time() >= rt.next_poll_at:
+                poll_once(rt=rt)
+
+
+def _poll_account_now(aid):
+    """Depois de um login: le a conta na hora."""
+    rt = Ctx.accounts.runtime(aid) if Ctx.accounts else None
+    if rt is not None:
+        rt.profile_ts = 0.0
+        rt.rate_limit_hits = 0
+        poll_once(rt=rt)
 
 
 SCAN_INTERVAL = 10  # scan incremental frequente para o total "quase em tempo real"
@@ -589,20 +724,30 @@ def scan_loop():
             print(f"[scan_loop] {e}")
 
 
-def start_login_thread():
-    if Ctx._login_thread and Ctx._login_thread.is_alive():
-        return
-    def _run():
+def start_login(aid=accounts_mod.PRINCIPAL, open_browser=True):
+    """Gera o link de login da conta. Com open_browser, abre no navegador
+    padrao; sem, o painel mostra o link para copiar e colar em outro perfil."""
+    rt = Ctx.accounts.runtime(aid)
+    if rt is None:
+        raise KeyError(aid)
+    url = Ctx.logins.start(aid, rt.token_store)
+    if open_browser:
         try:
-            auth.run_pkce_login(Ctx.token_store,
-                                callback_port=Ctx.cfg.get("callback_port", 54545))
-            poll_once()
-        except Exception as e:
-            msg, detail = errors.humanize(e)
-            Ctx.last_error = f"Falha ao reconectar a conta: {msg}"
-            Ctx.last_error_detail = f"login: {detail}"
-    Ctx._login_thread = threading.Thread(target=_run, daemon=True)
-    Ctx._login_thread.start()
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+    return url
+
+
+def start_login_thread():
+    """Compatibilidade: /auth/start (app nativo, widget antigo) = principal."""
+    try:
+        start_login(accounts_mod.PRINCIPAL, True)
+    except Exception as e:
+        msg, detail = errors.humanize(e)
+        Ctx.last_error = f"Falha ao reconectar a conta: {msg}"
+        Ctx.last_error_detail = f"login: {detail}"
 
 
 # --- HTTP handler ------------------------------------------------------------
@@ -705,12 +850,27 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/auth/start":
                 start_login_thread()
                 self._send(200, _json({"started": True}))
+            elif p == "/api/accounts":
+                self._send(200, _json({
+                    "accounts": _accounts_state(fx_rate()),
+                    "apps": accounts_mod.list_apps(),
+                    "onboarded": Ctx.accounts.onboarded,
+                }))
+            elif p == "/api/usage":
+                self._send(200, _json(usage_period(self._query())))
+            elif p == "/api/hardware":
+                self._send(200, _json(Ctx.hw.state() if Ctx.hw else {"available": False}))
             else:
                 self._serve_dist(p)  # SPA React (web/dist)
         except Exception:
             # o traceback (caminhos, usuario) fica no log, nao na resposta
             print(f"[http] erro em GET {p}:\n{traceback.format_exc()}")
             self._send(500, _json({"error": "erro interno do painel; veja o log"}))
+
+    def _query(self):
+        import urllib.parse as up
+        q = up.parse_qs(up.urlparse(self.path).query)
+        return {k: v[0] for k, v in q.items() if v}
 
     CORPO_MAX = 64 * 1024
 
@@ -742,6 +902,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, _json({"error": "erro interno do painel; veja o log"}))
 
     def _post(self, p):
+        if p.startswith("/api/accounts") or p == "/api/onboarded":
+            self._post_accounts(p)
+            return
         if p == "/api/config":
             body, erro = self._corpo_json()
             if erro:
@@ -784,10 +947,103 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "not found", "text/plain")
 
 
+    def _post_accounts(self, p):
+        body, erro = self._corpo_json()
+        if erro:
+            self._send(erro[0], _json({"error": erro[1]}))
+            return
+        if not isinstance(body, dict):
+            self._send(400, _json({"error": "corpo precisa ser um objeto JSON"}))
+            return
+        am = Ctx.accounts
+        partes = p.strip("/").split("/")  # api, accounts, <id>, <acao>
+        try:
+            if p == "/api/onboarded":
+                am.onboarded = bool(body.get("done", True))
+                am.save()
+                self._send(200, _json({"ok": True}))
+            elif p == "/api/accounts":
+                acc = am.create(body.get("provider", "claude"), body.get("name"))
+                self._send(200, _json({"ok": True, "account": _account_summary(acc, full=False)}))
+            elif p == "/api/accounts/reorder":
+                ids = body.get("ids")
+                if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                    raise ValueError("ids precisa ser uma lista")
+                am.reorder(ids)
+                self._send(200, _json({"ok": True}))
+            elif len(partes) == 3:
+                acc = am.update(partes[2], body)
+                self._send(200, _json({"ok": True, "account": _account_summary(acc, full=False)}))
+            elif len(partes) == 4:
+                aid, acao = partes[2], partes[3]
+                acc = am.get(aid)
+                if not acc:
+                    raise KeyError(aid)
+                if acao == "login":
+                    if acc["provider"] != "claude":
+                        raise ValueError("o ChatGPT usa o login do Codex desta maquina")
+                    url = start_login(aid, bool(body.get("open", True)))
+                    self._send(200, _json({"ok": True, "url": url}))
+                elif acao == "disconnect":
+                    am.disconnect(aid)
+                    self._send(200, _json({"ok": True}))
+                elif acao == "delete":
+                    am.remove(aid)
+                    self._send(200, _json({"ok": True}))
+                elif acao == "open":
+                    if not acc.get("app"):
+                        raise ValueError("escolha no painel qual aplicativo abre esta conta")
+                    accounts_mod.open_app(acc["app"])
+                    self._send(200, _json({"ok": True}))
+                elif acao == "refresh":
+                    rt = am.runtime(aid)
+                    if rt is not None and not rt.rate_limited:
+                        threading.Thread(target=_poll_account_now, args=(aid,), daemon=True).start()
+                    elif acc["provider"] == "codex" and Ctx.codex:
+                        Ctx.codex.refresh_limits(force=True)
+                    self._send(200, _json({"ok": True}))
+                else:
+                    self._send(404, _json({"error": "acao desconhecida"}))
+            else:
+                self._send(404, _json({"error": "rota desconhecida"}))
+        except KeyError:
+            self._send(404, _json({"error": "conta nao encontrada"}))
+        except ValueError as e:
+            self._send(400, _json({"error": str(e)}))
+
+
+PERIODOS = ("dia", "24h", "7d", "semana", "mes", "geral")
+
+
+def usage_period(q):
+    """Consumo de tokens num periodo. Por padrao so' desta maquina: o consumo
+    e' medido nos registros locais; as janelas de limite e' que sao da conta."""
+    period = q.get("period") if q.get("period") in PERIODOS else "dia"
+    local = q.get("scope", "local") != "all"
+    fx = fx_rate()
+    claude = _with_brl(Ctx.store.scope_summary(period, local_only=local), fx)
+    codex = None
+    if Ctx.codex:
+        codex = Ctx.codex.period_summary(period, local_only=local)
+        codex["equivalent_brl"] = _brl(codex.get("equivalent_usd"), fx)
+    total_tokens = (claude.get("total_tokens") or 0) + ((codex or {}).get("total_tokens") or 0)
+    total_usd = (claude.get("total_cost") or 0) + ((codex or {}).get("equivalent_usd") or 0)
+    return {"period": period, "scope": "local" if local else "all",
+            "machine": (Ctx.sync.name if Ctx.sync else None) or _hostname(),
+            "claude": claude, "codex": codex,
+            "total_tokens": total_tokens, "total_usd": total_usd,
+            "total_brl": _brl(total_usd, fx), "usd_brl": fx}
+
+
+def _hostname():
+    import socket
+    return socket.gethostname().split(".")[0]
+
+
 # --- config + run ------------------------------------------------------------
 
 DATA_DIR = os.environ.get("AI_USAGE_DATA_DIR", HERE)
-CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")  # recalculado em run()
 DEFAULTS = {"port": 8090, "refresh_seconds": 120, "currency": "BRL",
             "credits_divisor": 100, "intended_hours": 2.0, "daily_days": 30,
             "callback_port": 54545, "open_browser": True,
@@ -800,7 +1056,45 @@ DEFAULTS = {"port": 8090, "refresh_seconds": 120, "currency": "BRL",
             "sync_dir": None, "machine_name": None}
 
 
+def _local_dir():
+    """Pasta de dados DESTA maquina (banco, token, contas e config)."""
+    if os.environ.get("AI_USAGE_DATA_DIR"):
+        return DATA_DIR
+    base = (os.environ.get("LOCALAPPDATA")
+            or os.path.join(os.path.expanduser("~"), ".local", "share"))
+    return os.path.join(base, "claude-usage")
+
+
+def _config_path():
+    """A config fica na pasta local, nao no clone: o clone pode estar numa
+    pasta sincronizada entre maquinas, e ai uma maquina passava a usar o nome
+    e a pasta de sincronizacao da outra. Na primeira subida, copia a config
+    antiga do clone, descartando sync_dir que nao existe nesta maquina."""
+    if os.environ.get("AI_USAGE_DATA_DIR"):
+        return os.path.join(DATA_DIR, "config.json")
+    d = _local_dir()
+    novo = os.path.join(d, "config.json")
+    legado = os.path.join(HERE, "config.json")
+    if not os.path.exists(novo) and os.path.exists(legado):
+        try:
+            os.makedirs(d, exist_ok=True)
+            with open(legado, encoding="utf-8") as f:
+                old = json.load(f)
+            sd = old.get("sync_dir")
+            if sd and not (os.path.isabs(sd) and os.path.isdir(sd)):
+                old.pop("sync_dir", None)
+                old.pop("machine_name", None)
+            with open(novo, "w", encoding="utf-8") as f:
+                json.dump(old, f, indent=2, ensure_ascii=False)
+            print(f"[painel] config copiada de {legado} para {novo}")
+        except (OSError, ValueError) as e:
+            print(f"[painel] nao consegui copiar a config antiga: {e}")
+    return novo
+
+
 def load_config():
+    global CONFIG_PATH
+    CONFIG_PATH = _config_path()
     cfg = dict(DEFAULTS)
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
@@ -877,6 +1171,12 @@ def run(desktop=False, port=None, collect=True):
     Ctx.token_path = Ctx.token_store.path
     print(f"[painel] banco em {Ctx.db_path}")
     print(f"[painel] token em {Ctx.token_path}")
+    print(f"[painel] config em {CONFIG_PATH}")
+    data_dir = os.path.dirname(Ctx.db_path)
+    Ctx.accounts = accounts_mod.AccountManager(data_dir, os.path.dirname(Ctx.token_path), Ctx)
+    Ctx.logins = accounts_mod.LoginBroker(int(Ctx.cfg.get("callback_port", 54545)),
+                                          _poll_account_now)
+    Ctx.hw = hwmon.HardwareMonitor(HERE)
     sync_dir = os.environ.get("AI_USAGE_SYNC_DIR") or Ctx.cfg.get("sync_dir")
     if sync_dir:
         Ctx.sync = machines.MachineSync(

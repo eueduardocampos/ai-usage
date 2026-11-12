@@ -128,6 +128,10 @@ class Store:
         snap_cols = {r[1] for r in c.execute("PRAGMA table_info(api_snapshots)")}
         if "label" not in snap_cols:
             c.execute("ALTER TABLE api_snapshots ADD COLUMN label TEXT")
+        # migracao: varias contas (as linhas antigas sao da conta principal)
+        if "account" not in snap_cols:
+            c.execute("ALTER TABLE api_snapshots ADD COLUMN account TEXT DEFAULT 'principal'")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_snap_acc ON api_snapshots(account, window, ts)")
         c.commit()
 
     # --- scan dos logs -------------------------------------------------------
@@ -335,6 +339,10 @@ class Store:
             start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
         elif scope == "mes":
             start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif scope == "24h":
+            start = now - dt.timedelta(hours=24)
+        elif scope == "7d":
+            start = now - dt.timedelta(days=7)
         else:  # geral
             return None
         return self._utc_bound(start)
@@ -342,10 +350,16 @@ class Store:
     # --- agregacoes ----------------------------------------------------------
 
     @_locked
-    def scope_summary(self, scope: str) -> dict:
-        """Total + media por hora ativa, no escopo dado."""
+    def scope_summary(self, scope: str, local_only: bool = False) -> dict:
+        """Total + media por hora ativa, no escopo dado. local_only = so' o que
+        rodou nesta maquina (sem as outras maquinas da pasta sincronizada)."""
         lb = self._scope_lower_bound(scope)
-        where, params = ("WHERE timestamp >= ?", [lb]) if lb else ("", [])
+        conds, params = [], []
+        if lb:
+            conds.append("timestamp >= ?"); params.append(lb)
+        if local_only:
+            conds.append("machine IS NULL")
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
         cur = self.conn.cursor()
         rows = cur.execute(f"""SELECT model, source src, machine,
             SUM(input_tokens) i, SUM(output_tokens) o,
@@ -483,21 +497,21 @@ class Store:
     # --- snapshots da API ----------------------------------------------------
 
     @_locked
-    def insert_snapshot(self, normalized: dict):
+    def insert_snapshot(self, normalized: dict, account: str = "principal"):
         ts = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
         eu = normalized.get("extra_usage") or {}
         cur = self.conn.cursor()
         for win, data in (normalized.get("windows") or {}).items():
             cur.execute("""INSERT INTO api_snapshots
-                (ts, window, utilization, resets_at, used_credits, monthly_limit, currency, label)
-                VALUES (?,?,?,?,?,?,?,?)""",
+                (ts, window, utilization, resets_at, used_credits, monthly_limit, currency, label, account)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
                 (ts, win, data.get("utilization"), data.get("resets_at"),
                  eu.get("used_credits"), eu.get("monthly_limit"), eu.get("currency"),
-                 data.get("label")))
+                 data.get("label"), account))
         self.conn.commit()
 
     @_locked
-    def extra_credit_series(self, hours: int = 24):
+    def extra_credit_series(self, hours: int = 24, account: str = "principal"):
         """Serie (ts, used_credits) dos snapshots — mede o ritmo de gasto do
         excedente (tokens extras alem da licenca)."""
         lb = (dt.datetime.utcnow() - dt.timedelta(hours=hours)).strftime(
@@ -505,19 +519,21 @@ class Store:
         cur = self.conn.cursor()
         rows = cur.execute(
             """SELECT ts, MAX(used_credits) AS uc FROM api_snapshots
-               WHERE ts >= ? AND used_credits IS NOT NULL
-               GROUP BY ts ORDER BY ts""", (lb,)).fetchall()
+               WHERE ts >= ? AND used_credits IS NOT NULL AND account = ?
+               GROUP BY ts ORDER BY ts""", (lb, account)).fetchall()
         return [(r["ts"], r["uc"]) for r in rows]
 
     @_locked
-    def latest_state(self):
+    def latest_state(self, account: str = "principal"):
         """Ultimo snapshot gravado (todas as janelas no mesmo ts)."""
         cur = self.conn.cursor()
-        row = cur.execute("SELECT MAX(ts) m FROM api_snapshots").fetchone()
+        row = cur.execute("SELECT MAX(ts) m FROM api_snapshots WHERE account=?",
+                          [account]).fetchone()
         if not row or not row["m"]:
             return None
         ts = row["m"]
-        rows = cur.execute("SELECT * FROM api_snapshots WHERE ts=?", [ts]).fetchall()
+        rows = cur.execute("SELECT * FROM api_snapshots WHERE ts=? AND account=?",
+                           [ts, account]).fetchall()
         windows, extra = {}, None
         for r in rows:
             windows[r["window"]] = {"utilization": r["utilization"],
@@ -529,26 +545,26 @@ class Store:
                          "currency": r["currency"]}
         return {"ts": ts, "windows": windows, "extra_usage": extra}
 
-    def _series(self, window: str, lookback: int):
+    def _series(self, window: str, lookback: int, account: str = "principal"):
         cur = self.conn.cursor()
         rows = cur.execute("""SELECT ts, utilization FROM api_snapshots
-            WHERE window = ? AND utilization IS NOT NULL
-            ORDER BY ts DESC LIMIT ?""", (window, lookback)).fetchall()
+            WHERE window = ? AND utilization IS NOT NULL AND account = ?
+            ORDER BY ts DESC LIMIT ?""", (window, account, lookback)).fetchall()
         return [(r["ts"], r["utilization"]) for r in reversed(rows)]
 
     @_locked
-    def snapshot_series(self, window: str, lookback: int = 60):
+    def snapshot_series(self, window: str, lookback: int = 60, account: str = "principal"):
         """Serie [(ts, utilization)] da janela, do mais antigo ao mais novo."""
-        return self._series(window, lookback)
+        return self._series(window, lookback, account)
 
     @_locked
     def snapshot_rate(self, window: str, min_span_h: float = 0.5,
-                      lookback: int = 60):
+                      lookback: int = 60, account: str = "principal"):
         """%/hora medido por amostragem (ver forecast.series_rate): so retorna
         se as amostras cobrirem pelo menos `min_span_h` horas, e uma queda de
         valor (reset de janela) corta o trecho anterior."""
         from forecast import series_rate
-        return series_rate(self._series(window, lookback), min_span_h)
+        return series_rate(self._series(window, lookback, account), min_span_h)
 
     @_locked
     def heatmap_data(self):
@@ -578,10 +594,11 @@ class Store:
                 for (dow,hour),c in sorted(cells.items())]
 
     @_locked
-    def snapshot_history(self, hours: int = 48):
+    def snapshot_history(self, hours: int = 48, account: str = "principal"):
         lb = (dt.datetime.utcnow() - dt.timedelta(hours=hours)).strftime(
             "%Y-%m-%dT%H:%M:%S.000Z")
         cur = self.conn.cursor()
         rows = cur.execute("""SELECT ts, window, utilization FROM api_snapshots
-            WHERE ts >= ? AND utilization IS NOT NULL ORDER BY ts""", [lb]).fetchall()
+            WHERE ts >= ? AND utilization IS NOT NULL AND account = ? ORDER BY ts""",
+            [lb, account]).fetchall()
         return [dict(r) for r in rows]

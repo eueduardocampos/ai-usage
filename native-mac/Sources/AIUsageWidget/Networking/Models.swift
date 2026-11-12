@@ -14,6 +14,29 @@ struct AppState: Decodable {
     let chatgpt: ChatGPTState?
     let `switch`: SwitchVerdict?
     let update: UpdateInfo?
+    /// v5: uma entrada por conta (Claude 1, Claude 2, ChatGPT...). Ausente em
+    /// backends antigos -- aí o widget cai nos dois cartões fixos.
+    let accounts: [AccountState]?
+}
+
+struct AccountState: Decodable {
+    let id: String
+    let provider: String
+    let name: String
+    let connected: Bool?
+    let hasToken: Bool?
+    let email: String?
+    let appName: String?
+    let quotas: [Quota]?
+}
+
+/// GET /api/hardware: só o que o widget mostra numa linha.
+struct HardwareState: Decodable {
+    struct Usage: Decodable { let usage: Double?; let temp: Double? }
+    let available: Bool?
+    let cpu: Usage?
+    let gpu: Usage?
+    let memory: Usage?
 }
 
 /// Aviso de versão nova: o backend consulta as releases uma vez (cache de 6h)

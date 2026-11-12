@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="sdpi.css" />
+  <style>
+    body { font-family: -apple-system, 'Segoe UI', sans-serif; margin: 0; padding: 8px; color: #d8d8d8; background: transparent; font-size: 13px; }
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .row label { min-width: 96px; font-size: 12px; color: #969696; }
+    select { flex: 1; background: #2d2d2d; color: #d8d8d8; border: 1px solid #3d3d3d; border-radius: 4px; padding: 5px 8px; font-size: 13px; }
+    .hint { font-size: 11px; color: #7a7a7a; margin: 4px 0 12px; line-height: 1.45; }
+    .hide { display: none; }
+  </style>
+</head>
+<body>
+  <div class="row" id="rowConta"><label for="accountId">Conta</label><select id="accountId"><option value="principal">carregando…</option></select></div>
+  <div class="row hide" id="rowJanela"><label for="window">Janela</label><select id="window"></select></div>
+  <div class="row hide" id="rowComp"><label for="component">Começa em</label><select id="component"></select></div>
+  <div class="hint" id="dica"></div>
+  <div class="hint">As contas e os nomes vêm do painel local (localhost:8090). Para criar ou renomear uma conta, use o painel no navegador.</div>
+
+  <script>
+    let ws = null, uuid = null, action = null, settings = {};
+    const DICAS = {
+      acctapp: 'Abre o app ligado à conta, ou traz para a frente se já estiver aberto. O app de cada conta é escolhido no painel, em Configurações › Contas.',
+      acctquota: 'Cada clique troca a forma de ver: usado, restante, projeção no reset e tempo até o reset.',
+      machine: 'No dial: girar troca o componente (GPU, CPU, memória, disco, rede, bateria, temperatura); apertar troca a forma de ver (percentual, quantidade, temperatura). Na tecla: clique troca a forma de ver.',
+    };
+    const kind = () => (action || '').split('.').pop();
+    function setOptions(sel, items, value) {
+      sel.innerHTML = '';
+      for (const it of items) {
+        const o = document.createElement('option');
+        o.value = it.id; o.textContent = it.name; sel.appendChild(o);
+      }
+      if (value) sel.value = value;
+    }
+    function save() {
+      settings.accountId = document.getElementById('accountId').value;
+      if (kind() === 'acctquota') settings.window = document.getElementById('window').value;
+      if (kind() === 'machine') { settings.component = document.getElementById('component').value; settings.viewIdx = 0; }
+      ws && ws.send(JSON.stringify({ event: 'setSettings', context: uuid, payload: settings }));
+    }
+    ['accountId', 'window', 'component'].forEach(id => document.getElementById(id).addEventListener('change', save));
+
+    function layout() {
+      const k = kind();
+      document.getElementById('rowConta').classList.toggle('hide', k === 'machine');
+      document.getElementById('rowJanela').classList.toggle('hide', k !== 'acctquota');
+      document.getElementById('rowComp').classList.toggle('hide', k !== 'machine');
+      document.getElementById('dica').textContent = DICAS[k] || '';
+    }
+
+    // eslint-disable-next-line no-unused-vars
+    function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, inActionInfo) {
+      uuid = inUUID;
+      try { const ai = JSON.parse(inActionInfo); action = ai.action; settings = (ai.payload && ai.payload.settings) || {}; } catch { /* sem info */ }
+      layout();
+      ws = new WebSocket('ws://127.0.0.1:' + inPort);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ event: inRegisterEvent, uuid: inUUID }));
+        ws.send(JSON.stringify({ event: 'sendToPlugin', action, context: inUUID, payload: { pedido: 'contas' } }));
+      };
+      ws.onmessage = (evt) => {
+        let msg; try { msg = JSON.parse(evt.data); } catch { return; }
+        if (msg.event !== 'sendToPropertyInspector' || !msg.payload) return;
+        const p = msg.payload;
+        const contas = (p.contas || []).map(c => ({ id: c.id, name: `${c.name} · ${c.provider === 'claude' ? 'Claude' : 'ChatGPT'}${c.connected ? '' : ' (desconectada)'}` }));
+        setOptions(document.getElementById('accountId'), contas.length ? contas : [{ id: 'principal', name: p.online ? 'nenhuma conta' : 'painel desligado' }], settings.accountId || 'principal');
+        setOptions(document.getElementById('window'), p.janelas || [], settings.window || 'five_hour');
+        setOptions(document.getElementById('component'), p.componentes || [], settings.component || 'gpu');
+        if (!settings.accountId || (kind() === 'acctquota' && !settings.window) || (kind() === 'machine' && !settings.component)) save();
+      };
+    }
+  </script>
+</body>
+</html>

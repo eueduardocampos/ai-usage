@@ -29,6 +29,63 @@
   ],
   "Actions": [
     {
+      "Name": "Conta · Abrir app",
+      "UUID": "digital.astronauta.claudeusage.acctapp",
+      "Icon": "imgs/a-app",
+      "Tooltip": "Abre ou traz para a frente o app da conta escolhida.",
+      "PropertyInspectorPath": "ui/v5.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Conta · Limite",
+      "UUID": "digital.astronauta.claudeusage.acctquota",
+      "Icon": "imgs/a-quota",
+      "Tooltip": "Janela de 5 horas, 7 dias ou por modelo da conta escolhida. Clique para alternar: usado, restante, projeção, reset.",
+      "PropertyInspectorPath": "ui/v5.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ]
+    },
+    {
+      "Name": "Máquina · Monitor",
+      "UUID": "digital.astronauta.claudeusage.machine",
+      "Icon": "imgs/a-machine",
+      "Tooltip": "GPU, CPU, memória, disco, rede, bateria e temperatura. Gire para trocar o componente; aperte para trocar a forma de ver.",
+      "PropertyInspectorPath": "ui/v5.html",
+      "Controllers": [
+        "Encoder",
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Encoder": {
+        "layout": "layouts/clean.json",
+        "TriggerDescription": {
+          "Rotate": "Trocar componente",
+          "Push": "Trocar forma de ver",
+          "Touch": "Trocar forma de ver"
+        }
+      }
+    },
+    {
       "Name": "Claude · Sessão 5h",
       "UUID": "digital.astronauta.claudeusage.claude5",
       "Icon": "imgs/a-auto",

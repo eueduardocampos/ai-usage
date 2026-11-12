@@ -60,12 +60,18 @@ struct WidgetPanelView: View {
         return quotas.filter { !$0.isIdle }
     }
 
+    private func color(_ provider: String) -> Color {
+        provider == "codex" ? AppColors.codex : AppColors.claude
+    }
+
     @ViewBuilder
     private var cards: some View {
-        AccountCardView(title: "Claude", color: AppColors.claude,
-                        quotas: claudeQuotas, burnText: store.claudeBurnText)
-        AccountCardView(title: "Codex", color: AppColors.codex,
-                        quotas: codexQuotas, burnText: store.codexBurnText)
+        ForEach(store.accountCards) { card in
+            AccountCardView(title: card.name, color: color(card.provider),
+                            quotas: visible(card.quotas),
+                            burnText: card.provider == "codex" ? store.codexBurnText : store.claudeBurnText,
+                            subtitle: card.connected ? card.subtitle : "Conecte no painel completo")
+        }
     }
 
     /// Formato compacto: só as linhas de cota, agrupadas por conta, sem
@@ -73,8 +79,7 @@ struct WidgetPanelView: View {
     @ViewBuilder
     private var compact: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach([("Claude", AppColors.claude, claudeQuotas),
-                     ("Codex", AppColors.codex, codexQuotas)], id: \.0) { name, color, quotas in
+            ForEach(store.accountCards.map { ($0.name, color($0.provider), visible($0.quotas)) }, id: \.0) { name, color, quotas in
                 if !quotas.isEmpty {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(name)
@@ -142,6 +147,12 @@ struct WidgetPanelView: View {
     }
 
     private var footer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+        if let hw = store.hardwareText {
+            Label(hw, systemImage: "cpu")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
         HStack {
             Text(store.footerMessage)
                 .font(.system(size: 10))
@@ -150,6 +161,7 @@ struct WidgetPanelView: View {
             Button("Painel completo ↗", action: onOpenDashboard)
                 .buttonStyle(.plain)
                 .font(.system(size: 10, weight: .medium))
+        }
         }
     }
 }
