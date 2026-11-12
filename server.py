@@ -1318,7 +1318,9 @@ def run(desktop=False, port=None, collect=True):
     httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://localhost:{port}"
     print(f"[painel] rodando em {url}  (refresh={Ctx.cfg['refresh_seconds']}s)")
-    if Ctx.cfg.get("open_browser"):
+    # so' abre o navegador no primeiro uso (ninguem conectou contas ainda);
+    # reinicios do servico nunca devem abrir guia no meio do trabalho
+    if Ctx.cfg.get("open_browser") and not (Ctx.accounts and Ctx.accounts.onboarded):
         try:
             import webbrowser
             webbrowser.open(url)
