@@ -124,3 +124,20 @@
   .d-presets { grid-template-columns: minmax(0, 1fr) }
 }
 .w-body > .u-verdict > .u-heading h2, .w-body > .u-system > .u-heading h2, .d-body .u-system > .u-heading h2 { display: none }
+
+/* botao de configuracoes: icone + rotulo, com cara de botao */
+.u-root .t-gear { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; background: #ffffff10; border-color: #ffffff2e; font-size: 13px; font-weight: 600 }
+.u-root .t-gear:hover { background: #ffffff1c }
+.t-gear svg { flex: none }
+
+/* valores por conta */
+.a-money { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px }
+.a-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9aa8ba; min-width: 0 }
+.a-field span { display: flex; align-items: center; border: 1px solid #ffffff1c; border-radius: 8px; background: #ffffff05; padding-left: 9px }
+.a-field i { font-style: normal; color: #8795a9 }
+.u-root .a-field input { border: 0; background: transparent; width: 100%; min-width: 0; padding: 7px 9px }
+.r-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 4px }
+.r-card { min-width: 0 }
+.r-terminal { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: #9aa8ba; flex-wrap: wrap }
+.r-terminal select { background: #ffffff08; color: #dbe5f2; border: 1px solid #ffffff1c; border-radius: 8px; padding: 6px 9px; font: inherit }
+@media (max-width: 520px) { .a-money { grid-template-columns: minmax(0, 1fr) } .t-gear span { display: none } }

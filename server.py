@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import accounts as accounts_mod
 import auth
+import claude_sessions
 import codex_usage
 import hwmon
 import forecast
@@ -49,6 +50,7 @@ class Ctx:
     accounts = None  # accounts.AccountManager
     logins = None    # accounts.LoginBroker
     hw = None        # hwmon.HardwareMonitor
+    sessions = claude_sessions.SessionMap()
     store = None
     codex = None
     sync = None      # machines.MachineSync quando sync_dir esta configurado
@@ -478,6 +480,8 @@ def _account_summary(acc, fx=None, chatgpt=None, full=True):
     """Uma conta no formato unico do painel, Stream Deck e app nativo."""
     out = {"id": acc["id"], "provider": acc["provider"], "name": acc["name"],
            "app": acc.get("app"),
+           "price_brl": acc.get("price_brl"),
+           "extra_brl": accounts_mod.extras_do_mes(acc),
            "app_name": os.path.basename(acc["app"])[:-4] if (acc.get("app") or "").endswith(".app")
            else (os.path.basename(acc["app"]) if acc.get("app") else None)}
     if acc["provider"] == "claude":
@@ -856,6 +860,8 @@ class Handler(BaseHTTPRequestHandler):
                     "apps": accounts_mod.list_apps(),
                     "onboarded": Ctx.accounts.onboarded,
                 }))
+            elif p == "/api/returns":
+                self._send(200, _json(returns_period(self._query())))
             elif p == "/api/usage":
                 self._send(200, _json(usage_period(self._query())))
             elif p == "/api/hardware":
@@ -965,6 +971,13 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/api/accounts":
                 acc = am.create(body.get("provider", "claude"), body.get("name"))
                 self._send(200, _json({"ok": True, "account": _account_summary(acc, full=False)}))
+            elif p == "/api/accounts/terminal":
+                aid = body.get("id")
+                if not am.get(aid) or am.get(aid)["provider"] != "claude":
+                    raise ValueError("escolha uma conta do Claude")
+                am.terminal_account = aid
+                am.save()
+                self._send(200, _json({"ok": True}))
             elif p == "/api/accounts/reorder":
                 ids = body.get("ids")
                 if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
@@ -1013,6 +1026,83 @@ class Handler(BaseHTTPRequestHandler):
 
 
 PERIODOS = ("dia", "24h", "7d", "semana", "mes", "geral")
+
+
+def _ids_da_conta(rt):
+    prof = (rt.profile or {}) if rt else {}
+    return ((prof.get("account") or {}).get("uuid"), (prof.get("organization") or {}).get("uuid"))
+
+
+def returns_period(q):
+    """Retorno de cada conta: o que o uso dela custaria na API x o que se paga.
+
+    Claude: cada sessao vai para a conta cujo app a abriu (claude_sessions);
+    sessoes do terminal e scripts contam para `terminal_account`. Science vai
+    para a principal (usa o mesmo login). ChatGPT: todo o uso do Codex desta
+    maquina e' da conta do Codex. So' esta maquina."""
+    period = q.get("period") if q.get("period") in PERIODOS else "mes"
+    fx = fx_rate()
+    am = Ctx.accounts
+    claude = am.claude_accounts()
+    por_ids, por_conta = {}, {}
+    for a in claude:
+        acct, org = _ids_da_conta(am.runtime(a["id"]))
+        if acct:
+            por_ids[(acct, org)] = a["id"]
+            por_conta.setdefault(acct, a["id"])
+    mapa = Ctx.sessions.get()
+    terminal = am.terminal_account if am.get(am.terminal_account) else accounts_mod.PRINCIPAL
+    soma = {a["id"]: {"tokens": 0, "cost_usd": 0.0, "sessions": set(), "from_terminal": 0}
+            for a in am.accounts}
+    sem_conta = {"tokens": 0, "cost_usd": 0.0}
+    for row in Ctx.store.session_costs(period):
+        if row["source"] == "science":
+            dono = accounts_mod.PRINCIPAL
+        else:
+            ids = mapa.get(row["session"] or "")
+            dono = (por_ids.get(ids) or por_conta.get(ids[0])) if ids else None
+            if ids and not dono:
+                # sessao de um app cuja conta nao esta conectada no painel
+                sem_conta["tokens"] += row["tokens"]; sem_conta["cost_usd"] += row["cost"]
+                continue
+            if not dono:
+                dono = terminal
+                soma[dono]["from_terminal"] += row["tokens"]
+        s_ = soma[dono]
+        s_["tokens"] += row["tokens"]; s_["cost_usd"] += row["cost"]
+        if row["session"]:
+            s_["sessions"].add(row["session"])
+    cdx = Ctx.codex.period_summary(period, local_only=True) if Ctx.codex else None
+    out = []
+    for a in am.accounts:
+        s_ = soma[a["id"]]
+        if a["provider"] == "codex":
+            tokens = (cdx or {}).get("total_tokens") or 0
+            usd = (cdx or {}).get("equivalent_usd") or 0.0
+            parcial = bool((cdx or {}).get("unpriced_tokens"))
+            extra_api = None
+        else:
+            tokens, usd, parcial = s_["tokens"], s_["cost_usd"], False
+            latest = Ctx.store.latest_state(**_kw(am.runtime(a["id"])))
+            eu = _extra_usage(latest, {}, fx, Ctx.cfg, am.runtime(a["id"])) if latest else None
+            extra_api = (eu or {}).get("used_brl")
+        equiv = _brl(usd, fx)
+        price = a.get("price_brl")
+        extras = accounts_mod.extras_do_mes(a)
+        pago = None if price is None else price + (extras or 0) + (extra_api or 0)
+        out.append({"id": a["id"], "name": a["name"], "provider": a["provider"],
+                    "tokens": tokens, "equivalent_usd": usd, "equivalent_brl": equiv,
+                    "price_brl": price, "extras_brl": extras, "extra_credits_brl": extra_api,
+                    "paid_brl": pago, "ratio": (equiv / pago) if equiv is not None and pago else None,
+                    "partial": parcial, "sessions": len(s_["sessions"]),
+                    "terminal_tokens": s_["from_terminal"]})
+    precos = [r["paid_brl"] for r in out if r["paid_brl"] is not None]
+    equivs = [r["equivalent_brl"] for r in out if r["equivalent_brl"] is not None]
+    return {"period": period, "accounts": out, "terminal_account": terminal,
+            "unknown": {"tokens": sem_conta["tokens"], "equivalent_brl": _brl(sem_conta["cost_usd"], fx)},
+            "total_paid_brl": sum(precos) if precos else None,
+            "total_equivalent_brl": sum(equivs) if equivs else None,
+            "usd_brl": fx}
 
 
 def usage_period(q):
@@ -1160,6 +1250,24 @@ def _token_dir(db_path):
     return novo_dir
 
 
+def _migra_precos():
+    """Os valores antigos (uma mensalidade por provedor, na config) viram o
+    preco da conta principal do Claude e da conta do ChatGPT."""
+    am, cfg = Ctx.accounts, Ctx.cfg
+    mudou = False
+    for aid, chave in ((accounts_mod.PRINCIPAL, "subscription_brl"),
+                       (accounts_mod.CODEX, "chatgpt_subscription_brl")):
+        acc = am.get(aid)
+        if acc and acc.get("price_brl") is None and cfg.get(chave) is not None:
+            acc["price_brl"] = float(cfg[chave]); mudou = True
+    cdx = am.get(accounts_mod.CODEX)
+    if cdx and cdx.get("extra_brl") is None and cfg.get("chatgpt_extra_brl") is not None:
+        cdx["extra_brl"] = float(cfg["chatgpt_extra_brl"])
+        cdx["extra_month"] = cfg.get("chatgpt_extra_month"); mudou = True
+    if mudou:
+        am.save()
+
+
 def run(desktop=False, port=None, collect=True):
     Ctx.cfg = load_config()
     if desktop:
@@ -1177,6 +1285,7 @@ def run(desktop=False, port=None, collect=True):
     Ctx.logins = accounts_mod.LoginBroker(int(Ctx.cfg.get("callback_port", 54545)),
                                           _poll_account_now)
     Ctx.hw = hwmon.HardwareMonitor(HERE)
+    _migra_precos()
     sync_dir = os.environ.get("AI_USAGE_SYNC_DIR") or Ctx.cfg.get("sync_dir")
     if sync_dir:
         Ctx.sync = machines.MachineSync(
@@ -1184,6 +1293,7 @@ def run(desktop=False, port=None, collect=True):
             os.environ.get("AI_USAGE_MACHINE") or Ctx.cfg.get("machine_name"))
 
     def initialize():
+        threading.Thread(target=Ctx.store.backfill_sessions, daemon=True).start()
         Ctx.codex.scan()
         Ctx.codex.refresh_limits(force=True)
         if Ctx.sync:

@@ -225,27 +225,7 @@ function Settings({
   reconnecting
 }) {
   const [message, setMessage] = useState('');
-  return <div className="u-settings"><form onSubmit={async e => {
-      e.preventDefault();
-      const data = new FormData(e.currentTarget);
-      const values = {};
-      for (const key of ['subscription_brl', 'chatgpt_subscription_brl', 'chatgpt_extra_brl']) {
-        const text = data.get(key).trim();
-        if (!text) continue;
-        const value = Number(text.replace(',', '.'));
-        if (!Number.isFinite(value) || value < 0) {
-          setMessage('Use valores positivos ou zero.');
-          return;
-        }
-        values[key] = value;
-      }
-      try {
-        await onSave(values);
-        setMessage('Valores salvos.');
-      } catch {
-        setMessage('Não foi possível salvar. Tente novamente.');
-      }
-    }}><div className="u-settings-grid">{[['subscription_brl', 'Claude · mensalidade'], ['chatgpt_subscription_brl', 'ChatGPT · mensalidade'], ['chatgpt_extra_brl', 'ChatGPT · extras pagos neste mês']].map(([key, label]) => <label key={key}>{label}<input name={key} inputMode="decimal" defaultValue={state.config[key] ?? ''} placeholder="R$ · informe o valor" /></label>)}<button>Salvar valores</button></div><p role="status">{message}</p></form><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></div>;
+  return <div className="u-settings"><p className="u-hint">A mensalidade e os extras de cada conta ficam em Configurações › Contas. O retorno é calculado conta por conta.</p><div className="u-links"><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">Uso e créditos Codex ↗</a><a href="https://chatgpt.com/" target="_blank" rel="noreferrer">ChatGPT · configurações da assinatura ↗</a><a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer">Custos da API ↗</a></div><p>Tokens: registros locais, incluindo cache. Raciocínio já integra a saída e não é somado novamente. Histórico importado do Claude permanece atribuído ao Claude.</p><p>Equivalência OpenAI: tarifas padrão de texto em USD, convertidas pelo câmbio exibido. Estima contexto longo por chamada (a regra por sessão do GPT-5.5 pode alterar o valor); exclui ferramentas, escrita de cache não registrada e adicional Fast. Não representa uma fatura nem economia garantida.</p><p>Preços verificados em 05/09/2026: {Object.keys(state.chatgpt?.pricing?.models || {}).map(m => <a key={m} href={`https://developers.openai.com/api/docs/models/${m}`} target="_blank" rel="noreferrer">{m} ↗ </a>)}. Modelos sem correspondência permanecem sem valor estimado.</p><p>Extras são compras informadas manualmente, válidas no mês atual. Saldo de créditos é uma unidade da conta, não reais. Aproveitamento de cota e retorno financeiro são indicadores distintos.</p></div>;
 }
 
 // --- casca nova: barra fixa, widgets e configuracoes -------------------------
@@ -275,19 +255,42 @@ function UsageWidget({ usage, fx, period, scope, setScope, multiMachine }) {
   </>;
 }
 
-function CostWidget({ state, cg, fx, now }) {
-  const monthA = state.history?.mes?.total_cost_brl,
-    monthB = fx && cg.history?.mes ? cg.history.mes.equivalent_usd * fx : null;
-  const fixed = state.config.subscription_brl != null && state.config.chatgpt_subscription_brl != null ? state.config.subscription_brl + state.config.chatgpt_subscription_brl : null;
-  const extrasA = state.extra_usage?.used_brl;
-  const openaiExtra = state.config.chatgpt_extra_brl;
-  const paid = fixed != null ? fixed + (extrasA ?? 0) + (openaiExtra ?? 0) : null;
+function ReturnCard({ r, now }) {
+  const color = r.provider === 'codex' ? GREEN : ORANGE;
+  const today = new Date(now);
+  const dim = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const proj = r.equivalent_brl != null && today.getDate() >= 3 ? r.equivalent_brl / today.getDate() * dim : null;
+  const ratio = r.ratio;
+  return <div className="u-finance r-card" style={{ '--provider': color }}>
+    <div className="u-heading"><h3 style={{ color }}>{r.name}</h3><span className="u-tag">{r.partial ? 'estimativa parcial' : 'equivalência estimada'}</span></div>
+    <div className="u-money">{money(r.equivalent_brl)}</div>
+    <p>{fmtTokens(r.tokens)} tokens neste mês{r.provider === 'claude' ? ` · ${r.sessions} sessões` : ''}</p>
+    <div className="u-finance-facts">
+      <span>Mensalidade <b>{r.price_brl == null ? 'não informada' : `${money(r.price_brl)}/mês`}</b></span>
+      <span>Extras informados <b>{money(r.extras_brl)}</b></span>
+      {r.extra_credits_brl != null && <span>Créditos extras da conta <b>{money(r.extra_credits_brl)}</b></span>}
+    </div>
+    <Meter value={ratio == null ? 0 : Math.min(100, ratio * 100)} color={color} />
+    <h4>{ratio == null ? 'Informe a mensalidade desta conta para ver o retorno' : ratio >= 1 ? `${ratio.toFixed(2)}× o valor pago` : `${money(Math.max(0, r.paid_brl - r.equivalent_brl))} até empatar com a API`}</h4>
+    {ratio != null && <p>{ratio >= 1 ? `Diferença estimada: +${money(r.equivalent_brl - r.paid_brl)}.` : 'Ainda abaixo do que se paga no mês.'}{proj != null ? ` No ritmo atual, fecha o mês perto de ${money(proj)}.` : ''}</p>}
+    {r.terminal_tokens > 0 && <p className="u-hint">Inclui {fmtTokens(r.terminal_tokens)} tokens de sessões do terminal.</p>}
+  </div>;
+}
+
+function CostWidget({ returns, now, accounts, onTerminal, onOpenAccounts }) {
+  if (!returns) return <p className="u-hint">Calculando o retorno de cada conta…</p>;
+  const total = returns.total_equivalent_brl, paid = returns.total_paid_brl;
+  const claudeAccs = (accounts || []).filter(a => a.provider === 'claude');
   return <>
     <div className="w-usage-top">
-      <div><small>Investimento mensal</small><div className="u-medium">{money(fixed)}</div><small>Claude {money(state.config.subscription_brl)} + ChatGPT {money(state.config.chatgpt_subscription_brl)}</small></div>
-      <div><small>Equivalente neste mês</small><div className="u-medium">{money(monthA != null && monthB != null ? monthA + monthB : null)}</div><small>{paid && monthB != null ? `${((monthA + monthB) / paid).toFixed(2)}× do custo informado` : 'Informe os valores nas configurações'}</small></div>
+      <div><small>Pago no mês (todas as contas)</small><div className="u-medium">{money(paid)}</div><small><button className="w-link" onClick={onOpenAccounts}>Editar valores das contas</button></small></div>
+      <div><small>Equivalente de API no mês</small><div className="u-medium">{money(total)}</div><small>{paid ? `${(total / paid).toFixed(2)}× o valor pago` : 'Informe as mensalidades'}</small></div>
     </div>
-    <div className="u-finance-grid"><Finance label="Claude" color={ORANGE} summary={state.history?.mes} fixed={state.config.subscription_brl} extra={extrasA} fx={fx} now={now} /><Finance label="ChatGPT" color={GREEN} summary={cg.history?.mes} fixed={state.config.chatgpt_subscription_brl} extra={openaiExtra} fx={fx} now={now} openai /></div>
+    <div className="r-grid">{returns.accounts.map(r => <ReturnCard key={r.id} r={r} now={now} />)}</div>
+    {returns.unknown?.tokens > 0 && <p className="u-hint">{fmtTokens(returns.unknown.tokens)} tokens ({money(returns.unknown.equivalent_brl)}) vieram de um app cuja conta não está conectada no painel.</p>}
+    {claudeAccs.length > 1 && <label className="r-terminal">Sessões do terminal contam para
+      <select value={returns.terminal_account} onChange={e => onTerminal(e.target.value)}>{claudeAccs.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
+    <p className="u-hint">Cada sessão vai para a conta do app que a abriu (Claude ou cópias por conta). O uso é medido neste computador; mensalidade e extras ficam em Configurações › Contas.</p>
   </>;
 }
 
@@ -379,6 +382,7 @@ function Drawer({ open, onClose, tab, setTab, accounts, reloadAccounts, layout, 
 export default function Dashboard() {
   const [state, setState] = useState(null), [history, setHistory] = useState(null);
   const [usage, setUsage] = useState(null), [accounts, setAccounts] = useState(null);
+  const [returns, setReturns] = useState(null);
   const [now, setNow] = useState(() => Date.now()), [error, setError] = useState('');
   const [period, setPeriod] = useState(() => { try { return localStorage.getItem('aiu.period') || 'dia'; } catch { return 'dia'; } });
   const [scope, setScope] = useState('local');
@@ -412,6 +416,14 @@ export default function Dashboard() {
     try { localStorage.setItem('aiu.period', period); } catch { /* sem storage */ }
     return () => { alive = false; clearInterval(t); };
   }, [period, scope]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.returns().then(r => alive && setReturns(r)).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, [accounts?.accounts?.map(a => `${a.price_brl}|${a.extra_brl}`).join(',')]);
 
   const layout = normalizeLayout(localLayout ?? state?.config?.layout);
   const hwVisible = !layout.hidden.includes('hardware');
@@ -447,7 +459,7 @@ export default function Dashboard() {
     usage: () => <UsageWidget usage={usage} fx={fx} period={period} scope={scope} setScope={setScope} multiMachine={!!state.machines} />,
     verdict: () => state.switch ? <Verdict sw={state.switch} intended={state.config.intended_hours} onHours={h => save({ intended_hours: h })} saving={saving} /> : <p className="u-hint">Sem leitura da conta principal ainda.</p>,
     burn: () => <BurnWidget state={state} cg={cg} />,
-    cost: () => <CostWidget state={state} cg={cg} fx={fx} now={now} />,
+    cost: () => <CostWidget returns={returns} now={now} accounts={accs} onOpenAccounts={() => { setTab('contas'); setDrawer(true); }} onTerminal={async id => { await api.setTerminal(id); setReturns(await api.returns()); }} />,
     machines: () => state.machines ? <Machines state={state} cg={cg} fx={fx} now={now} /> : <p className="u-hint">Ligue a pasta de sincronização (sync_dir) para somar outras máquinas.</p>,
     charts: () => <ChartsWidget history={history} cg={cg} fx={fx} now={now} />,
     'quota-history': () => <QuotaHistoryWidget state={state} history={history} cg={cg} />,
@@ -468,7 +480,7 @@ export default function Dashboard() {
         <span className="t-status">{noticeText || error || `Atualizado ${new Date(state.generated_at).toLocaleTimeString('pt-BR')}`}</span>
         <button onClick={() => setEditing(e => !e)} aria-pressed={editing}>{editing ? 'Concluir' : 'Editar tela'}</button>
         <button onClick={refresh} disabled={busy} title="Atualizar agora">{busy ? '…' : '↻'}</button>
-        <button className="t-gear" onClick={() => setDrawer(true)} aria-label="Configurações" title="Configurações">⚙</button>
+        <button className="t-gear" onClick={() => setDrawer(true)} aria-label="Configurações"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span>Configurações</span></button>
       </div>
     </header>
     <main className="u-wrap t-main">

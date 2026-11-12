@@ -16,6 +16,7 @@ desta maquina e o `state` diz de qual conta era.
 """
 
 import json
+import math
 import os
 import re
 import secrets
@@ -50,6 +51,17 @@ class Runtime:
         self.profile = None
         self.profile_ts = 0.0
         self.ignored_logged = False
+
+
+def _valor(v):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v) if math.isfinite(v) and 0 <= v <= 1e6 else None
+
+
+def extras_do_mes(acc):
+    """Extras informados valem so' no mes em que foram digitados."""
+    return acc.get("extra_brl") if acc.get("extra_month") == time.strftime("%Y-%m") else None
 
 
 def _limpa_nome(nome, padrao):
@@ -97,7 +109,10 @@ class AccountManager:
             limpos.append({"id": aid, "provider": a["provider"],
                            "name": _limpa_nome(a.get("name"), aid),
                            "app": a.get("app") if isinstance(a.get("app"), str) else None,
-                           "created_at": a.get("created_at")})
+                           "created_at": a.get("created_at"),
+                           "price_brl": _valor(a.get("price_brl")),
+                           "extra_brl": _valor(a.get("extra_brl")),
+                           "extra_month": a.get("extra_month")})
         # a principal e o Codex local sempre existem (podem so' ser renomeados)
         if PRINCIPAL not in vistos:
             limpos.insert(0, self._defaults()[0])
@@ -107,12 +122,15 @@ class AccountManager:
         for a in self.accounts:
             self._runtime_for(a)
         self.onboarded = bool((data or {}).get("onboarded")) if isinstance(data, dict) else False
+        ta = (data or {}).get("terminal_account") if isinstance(data, dict) else None
+        self.terminal_account = ta if isinstance(ta, str) else PRINCIPAL
 
     def save(self):
         with self._lock:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"accounts": self.accounts, "onboarded": self.onboarded},
+                json.dump({"accounts": self.accounts, "onboarded": self.onboarded,
+                           "terminal_account": self.terminal_account},
                           f, indent=2, ensure_ascii=False)
             os.replace(tmp, self.path)
 
@@ -171,6 +189,14 @@ class AccountManager:
                 raise KeyError(aid)
             if "name" in changes:
                 acc["name"] = _limpa_nome(changes["name"], acc["name"])
+            for k in ("price_brl", "extra_brl"):
+                if k in changes:
+                    v = changes[k]
+                    if v is not None and _valor(v) is None:
+                        raise ValueError("use um valor em reais entre 0 e 1.000.000")
+                    acc[k] = _valor(v)
+                    if k == "extra_brl":
+                        acc["extra_month"] = time.strftime("%Y-%m")
             if "app" in changes:
                 app = changes["app"]
                 if app is not None and not (isinstance(app, str) and app_valido(app)):

@@ -22,6 +22,8 @@ export const api = {
   usage: (period, scope = 'local') => getJSON(`/api/usage?period=${period}&scope=${scope}`),
   hardware: () => getJSON('/api/hardware'),
   accounts: () => getJSON('/api/accounts'),
+  returns: (period = 'mes') => getJSON(`/api/returns?period=${period}`),
+  setTerminal: (id) => postJSON('/api/accounts/terminal', { id }),
   setConfig: (body) => postJSON('/api/config', body),
   refresh: () => fetch('/api/refresh', { method: 'POST' }).then((r) => r.json()),
   authStart: () => fetch('/auth/start'),

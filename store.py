@@ -28,6 +28,7 @@ import functools
 import glob
 import json
 import os
+import time
 import sqlite3
 import threading
 
@@ -124,6 +125,10 @@ class Store:
             c.execute("ALTER TABLE turns ADD COLUMN source TEXT DEFAULT 'code'")
         if "cost" not in cols:
             c.execute("ALTER TABLE turns ADD COLUMN cost REAL")
+        # migracao: sessao de cada turno (liga o uso a conta que rodou a sessao)
+        if "session" not in cols:
+            c.execute("ALTER TABLE turns ADD COLUMN session TEXT")
+        c.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
         # migracao: rotulo da janela vindo do servidor (janelas por modelo)
         snap_cols = {r[1] for r in c.execute("PRAGMA table_info(api_snapshots)")}
         if "label" not in snap_cols:
@@ -172,7 +177,7 @@ class Store:
                 for r in rows:
                     cur.execute("""INSERT OR IGNORE INTO turns
                         (message_id, timestamp, model, input_tokens, output_tokens,
-                         cache_read, cache_creation) VALUES (?,?,?,?,?,?,?)""", r)
+                         cache_read, cache_creation, session) VALUES (?,?,?,?,?,?,?,?)""", r)
                     new_turns += cur.rowcount
                 cur.execute("""INSERT INTO processed_files(path, mtime, lines, size, offset)
                     VALUES(?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET
@@ -245,6 +250,7 @@ class Store:
         Code pode estar no meio da escrita) fica para o proximo scan."""
         rows = []
         n = 0
+        sessao_arquivo = os.path.splitext(os.path.basename(fp))[0]
         with open(fp, "rb") as f:
             f.seek(inicio)
             dados = f.read()
@@ -272,8 +278,58 @@ class Store:
             cc = u.get("cache_creation_input_tokens") or 0
             if (i + o + cr + cc) == 0:
                 continue
-            rows.append((mid, r.get("timestamp"), msg.get("model"), i, o, cr, cc))
+            rows.append((mid, r.get("timestamp"), msg.get("model"), i, o, cr, cc,
+                         r.get("sessionId") or sessao_arquivo))
         return rows, n, offset
+
+    def backfill_sessions(self, days=62, log=print):
+        """Uma vez so': preenche a sessao dos turnos antigos (gravados antes da
+        coluna existir), relendo so' os arquivos mexidos nos ultimos `days`
+        dias. Roda em segundo plano; o painel funciona enquanto isso."""
+        with self._lock:
+            feito = self.conn.execute("SELECT value FROM meta WHERE key='sessions_backfill'").fetchone()
+        if feito:
+            return 0
+        limite = time.time() - days * 86400
+        total = 0
+        for fp in glob.glob(os.path.join(PROJECTS_DIR, "**", "*.jsonl"), recursive=True):
+            try:
+                if os.path.getmtime(fp) < limite:
+                    continue
+                rows, _, _ = self._parse_file(fp, 0)
+            except OSError:
+                continue
+            with self._lock:
+                cur = self.conn.cursor()
+                for r in rows:
+                    cur.execute("UPDATE turns SET session=? WHERE message_id=? AND session IS NULL",
+                                (r[7], r[0]))
+                    total += cur.rowcount
+                self.conn.commit()
+        with self._lock:
+            self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('sessions_backfill', ?)",
+                              (str(int(time.time())),))
+            self.conn.commit()
+        log(f"[scan] sessao preenchida em {total} turnos antigos")
+        return total
+
+    @_locked
+    def session_costs(self, scope: str):
+        """Custo e tokens por sessao, so' desta maquina (remote_hours nao tem
+        sessao). Science entra com session=NULL e source='science'."""
+        lb = self._scope_lower_bound(scope)
+        where, params = ("WHERE timestamp >= ?", [lb]) if lb else ("", [])
+        rows = self.conn.execute(f"""SELECT session, model, COALESCE(source,'code') src,
+            SUM(input_tokens) i, SUM(output_tokens) o, SUM(cache_read) cr,
+            SUM(cache_creation) cc, SUM(COALESCE(cost,0)) stored, COUNT(*) n
+            FROM turns {where} GROUP BY session, model, src""", params).fetchall()
+        out = []
+        for r in rows:
+            i, o, cr, cc = r["i"] or 0, r["o"] or 0, r["cr"] or 0, r["cc"] or 0
+            out.append({"session": r["session"], "source": r["src"], "model": r["model"],
+                        "tokens": i + o + cr + cc, "turns": r["n"],
+                        "cost": group_cost(r["src"], r["model"], i, o, cr, cc, r["stored"])})
+        return out
 
     # --- consumo entre maquinas (machines.py) --------------------------------
 

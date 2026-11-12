@@ -8,7 +8,7 @@ export const WIDGETS = [
   { id: 'usage', title: 'Consumo no período', hint: 'Tokens e equivalente de API do período escolhido no topo' },
   { id: 'verdict', title: 'Posso trocar de modelo?', hint: 'Veredito pela janela mais apertada' },
   { id: 'burn', title: 'Ritmo por modelo', hint: 'Tokens por hora nas últimas 2 horas' },
-  { id: 'cost', title: 'Custo e retorno', hint: 'Assinaturas, extras e equivalência de API no mês' },
+  { id: 'cost', title: 'Retorno por conta', hint: 'Mensalidade de cada conta contra o equivalente de API no mês' },
   { id: 'machines', title: 'Consumo por máquina', hint: 'Só aparece com a pasta de sincronização ligada' },
   { id: 'charts', title: 'Quando você usa', hint: 'Tokens por dia e ritmo por dia e hora' },
   { id: 'quota-history', title: 'Evolução das cotas', hint: 'Últimas 48 horas' },
