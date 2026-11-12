@@ -23,7 +23,7 @@ por conta própria.
 | **Widget** | Versão enxuta com as cotas e o ritmo, para deixar de canto | http://localhost:8090/widget |
 | **App de mesa** | Mac, Windows e Linux: o widget numa janela flutuante, com o motor embutido (não precisa de Python) | instalador da [página de releases](https://github.com/eueduardocampos/ai-usage/releases) |
 | **App nativo do macOS** | Item na barra de menu com os números em texto, mais o widget em três formatos | `native-mac/` (veja [App nativo do macOS](#app-nativo-do-macos)) |
-| **Stream Deck** | Oito teclas e quatro dials com cotas, ritmo e retorno | perfil + plugin em [`streamdeck/`](streamdeck/README.md) |
+| **Stream Deck** | Uma linha por conta (ícone do app e limites) e dials com a máquina | perfil + plugin em [`streamdeck/`](streamdeck/README.md) |
 
 O número da versão é o mesmo em todas elas (arquivo [`VERSION`](VERSION)).
 
@@ -38,6 +38,38 @@ O número da versão é o mesmo em todas elas (arquivo [`VERSION`](VERSION)).
 ![Perfil Consumo de IA para Stream Deck Plus](docs/streamdeck.png)
 
 *Prévia renderizada das oito teclas e quatro dials; valores demonstrativos.*
+
+## Novidades da 5.0
+
+- **Várias contas.** Conecte quantas contas do Claude precisar e dê um nome a
+  cada uma. Cada conta tem o próprio login e os próprios limites de 5 horas,
+  7 dias e por modelo. O login pode abrir no navegador padrão ou virar um link
+  para colar no perfil do navegador que está logado naquela conta (o retorno
+  sempre cai neste computador, em `localhost`). O ChatGPT usa o login do
+  Codex da máquina.
+- **Retorno por conta.** Cada conta guarda quem paga a assinatura (você, parte
+  subsidiada ou a empresa), o valor e os extras do mês, ou "não tenho essa
+  informação". O uso de cada sessão do Claude Code vai para a conta do app
+  que a abriu (o app oficial ou as cópias por conta, como as do Parall);
+  sessões do terminal contam para a conta escolhida no painel.
+- **Esta máquina.** CPU (núcleos de desempenho e de eficiência), GPU,
+  memória, disco, rede, bateria e temperaturas, lidos sem senha de
+  administrador por um leitor nativo do macOS (`hwmon/mac`), compilado na
+  primeira consulta quando há Xcode ou Command Line Tools.
+- **Painel modular.** Barra fixa com o período (hoje, 24 horas, 7 dias, esta
+  semana, este mês, total), widgets que minimizam, escondem, mudam de ordem e
+  de largura, e predefinições de tela. O layout fica no servidor e vale em
+  qualquer navegador.
+- **Stream Deck.** Uma linha por conta: o ícone do app da conta (clique para
+  abrir ou trazer para a frente), 5 horas, 7 dias e por modelo, com clique
+  alternando entre usado, restante, projeção e reset. Os dials mostram a
+  máquina: girar troca o componente, apertar troca a forma de ver. Perfil
+  pronto em `streamdeck/Consumo de IA · Contas.streamDeckProfile`
+  (`build_profile_v5.py` gera outro com as suas contas).
+- **App nativo do macOS.** Um cartão por conta e uma linha com a máquina.
+
+O consumo de tokens é sempre medido nos registros deste computador. As janelas
+de limite são da conta e já somam todas as máquinas.
 
 ## Fontes de dados
 
