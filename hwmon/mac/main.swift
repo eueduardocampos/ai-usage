@@ -12,6 +12,7 @@
 import Foundation
 import IOKit
 import Darwin
+import AppKit
 
 // MARK: - utilitarios
 
@@ -346,6 +347,24 @@ func emit(_ o: [String: Any]) {
 }
 
 let args = CommandLine.arguments
+
+// --icon <app> <saida.png> [tamanho]: o icone do app como o Finder mostra
+// (inclui o selo das copias do Parall). Usado nas teclas do Stream Deck.
+if args.count >= 4 && args[1] == "--icon" {
+    let size = CGFloat(Double(args.count > 4 ? args[4] : "144") ?? 144)
+    let img = NSWorkspace.shared.icon(forFile: args[2])
+    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size),
+                                     bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                     colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { exit(1) }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    img.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+    NSGraphicsContext.restoreGraphicsState()
+    guard let png = rep.representation(using: .png, properties: [:]),
+          (try? png.write(to: URL(fileURLWithPath: args[3]))) != nil else { exit(1) }
+    exit(0)
+}
+
 if args.contains("--once") {
     _ = sample()
     Thread.sleep(forTimeInterval: 0.5)

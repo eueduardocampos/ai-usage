@@ -151,6 +151,31 @@ class HardwareMonitor:
                               "cores": n, "load": [round(x, 1) for x in la]}
         return out
 
+    # --- icone de app ----------------------------------------------------------
+
+    def app_icon(self, app_path, size=144):
+        """PNG do icone do app (cache na pasta de dados). None fora do Mac ou
+        se o leitor nativo ainda nao estiver pronto."""
+        exe = self._binary()
+        if not exe or not os.path.isdir(app_path):
+            return None
+        import hashlib
+        d = os.path.join(_data_bin_dir(), "..", "icons")
+        os.makedirs(d, exist_ok=True)
+        nome = hashlib.sha1(f"{app_path}|{size}".encode()).hexdigest()[:16] + ".png"
+        out = os.path.normpath(os.path.join(d, nome))
+        try:
+            fresco = os.path.getmtime(out) >= os.path.getmtime(app_path)
+        except OSError:
+            fresco = False
+        if not fresco:
+            r = subprocess.run([exe, "--icon", app_path, out, str(size)],
+                               capture_output=True, timeout=20)
+            if r.returncode != 0 or not os.path.exists(out):
+                return None
+        with open(out, "rb") as f:
+            return f.read()
+
     # --- API -----------------------------------------------------------------
 
     def state(self):

@@ -99,6 +99,21 @@ function appView(state, settings) {
   };
 }
 
+/** Tecla de abrir app: o icone real do app, com o nome da conta embaixo
+ *  (duas contas do Claude tem o mesmo icone). Sem icone, cai no texto. */
+function appKeySvg(view, iconDataUri, ok) {
+  const esc = t => String(t).replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
+  const name = esc(view.label || '');
+  const size = Math.min(17, 130 / Math.max(1, name.length) * 1.7);
+  const dot = ok ? '' : '<circle cx="124" cy="20" r="9" fill="#d29922" stroke="#10151c" stroke-width="3"/>';
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="144" height="144" viewBox="0 0 144 144">`
+    + `<rect width="144" height="144" fill="#10151c"/>`
+    + `<image x="26" y="8" width="92" height="92" href="${iconDataUri}" xlink:href="${iconDataUri}"/>`
+    + dot
+    + `<text x="72" y="128" text-anchor="middle" font-family="-apple-system, Segoe UI, sans-serif" font-size="${size.toFixed(1)}" font-weight="bold" fill="${view.accent || '#f0f6fc'}">${name}</text>`
+    + `</svg>`;
+}
+
 // ------------------------------------------------------------ maquina
 
 const GB = 1024 ** 3;
@@ -173,4 +188,4 @@ function hwView(hw, settings) {
   return v;
 }
 
-module.exports = { COMPONENTS, COMPONENT_NAME, WINDOWS, QUOTA_MODES, quotaView, appView, hwView, hwViews, pickQuota, accountsOf };
+module.exports = { appKeySvg, COMPONENTS, COMPONENT_NAME, WINDOWS, QUOTA_MODES, quotaView, appView, hwView, hwViews, pickQuota, accountsOf };

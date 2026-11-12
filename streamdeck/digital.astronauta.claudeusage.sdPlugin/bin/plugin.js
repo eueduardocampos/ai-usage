@@ -116,6 +116,7 @@ const contexts = new Map(); // context -> { action, controller, settings }
 let latest = null; // /api/state
 let latestTotal = null; // /api/total
 let latestHw = null; // /api/hardware
+const icons = new Map(); // accountId -> { app, uri } (icone do app em PNG)
 let hwTimer = null;
 let lastError = null;
 let pollTimer = null;
@@ -587,6 +588,18 @@ function render(context) {
     const s = entry.settings || {};
     const v = entry.action === A_MACHINE ? V5.hwView(latestHw, s)
       : entry.action === A_APP ? V5.appView(latest, s) : V5.quotaView(latest, s);
+    if (entry.action === A_APP && entry.controller !== "Encoder") {
+      const id = s.accountId || "principal";
+      const acc = (V5.accountsOf(latest)).find(a => a.id === id);
+      const ic = icons.get(id);
+      if (acc && acc.app && (!ic || ic.app !== acc.app)) fetchIcon(id, acc.app);
+      if (acc && ic && ic.uri && ic.app === acc.app) {
+        const ok = acc.provider === "codex" ? acc.connected : acc.has_token && acc.connected !== false;
+        setImage(context, V5.appKeySvg(v, ic.uri, ok));
+        setTitle(context, "");
+        return;
+      }
+    }
     if (entry.controller === "Encoder") setFeedback(context, { canvas: R.toDataUri(R.clean(v, true)) });
     else { setImage(context, R.clean(v)); setTitle(context, ""); }
     return;
@@ -722,6 +735,25 @@ function postJSON(path, body, cb) {
   req.on("error", (err) => cb && cb(err));
   req.write(data);
   req.end();
+}
+
+function fetchIcon(id, app) {
+  icons.set(id, { app, uri: null }); // evita pedir de novo enquanto baixa
+  const req = http.get(`${baseUrl()}/api/accounts/${encodeURIComponent(id)}/icon`, { timeout: 25000 }, (res) => {
+    if (res.statusCode !== 200) {
+      res.resume();
+      setTimeout(() => icons.delete(id), 60000); // tenta de novo depois
+      return;
+    }
+    const parts = [];
+    res.on("data", (c) => parts.push(c));
+    res.on("end", () => {
+      icons.set(id, { app, uri: `data:image/png;base64,${Buffer.concat(parts).toString("base64")}` });
+      for (const [c, e] of contexts.entries()) if (e.action === A_APP) render(c);
+    });
+  });
+  req.on("timeout", () => req.destroy(new Error("timeout")));
+  req.on("error", () => setTimeout(() => icons.delete(id), 60000));
 }
 
 function fetchHw() {

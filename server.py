@@ -862,6 +862,13 @@ class Handler(BaseHTTPRequestHandler):
                     "apps": accounts_mod.list_apps(),
                     "onboarded": Ctx.accounts.onboarded,
                 }))
+            elif p.startswith("/api/accounts/") and p.endswith("/icon"):
+                acc = Ctx.accounts.get(p.split("/")[3])
+                png = Ctx.hw.app_icon(acc["app"]) if acc and acc.get("app") and Ctx.hw else None
+                if png:
+                    self._send(200, png, "image/png")
+                else:
+                    self._send(404, _json({"error": "sem icone"}))
             elif p == "/api/returns":
                 self._send(200, _json(returns_period(self._query())))
             elif p == "/api/usage":
