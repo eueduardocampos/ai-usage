@@ -7,7 +7,7 @@ import HeatmapChart from './components/HeatmapChart';
 import './dashboard.css';
 import './shell.css';
 import Hardware, { useHardware } from './Hardware';
-import { AccountCard, AccountsManager, Onboarding } from './Accounts';
+import { AccountCard, AccountsManager, Onboarding, PRICE_KIND } from './Accounts';
 import { WIDGETS, PRESETS, PERIODS, normalizeLayout } from './layout';
 Chart.register(...registerables);
 const ORANGE = '#ef985d',
@@ -26,29 +26,6 @@ function since(iso, now) {
   if (min < 60) return `há ${min} min`;
   const h = Math.round(min / 60);
   return h < 48 ? `há ${h} h` : `há ${Math.round(h / 24)} dias`;
-}
-// Consumo de cada computador da conta + a soma. So' aparece com sync_dir
-// configurado (state.machines). As cotas de 5h/semana ja sao da conta inteira.
-function Machines({ state, cg, fx, now }) {
-  const info = state.machines;
-  if (!info) return null;
-  const hc = state.history || {},
-    ho = cg.history || {};
-  const part = (scope, name) => {
-    const a = hc[scope]?.by_machine?.[name],
-      b = ho[scope]?.by_machine?.[name];
-    const cost = a?.cost_brl == null && (b?.equivalent_usd == null || !fx) ? null
-      : (a?.cost_brl || 0) + (b?.equivalent_usd && fx ? b.equivalent_usd * fx : 0);
-    return { tokens: (a?.tokens || 0) + (b?.tokens || 0), cost };
-  };
-  const rows = info.machines.map(m => ({ ...m, all: part('geral', m.name), month: part('mes', m.name) }));
-  const sum = key => rows.reduce((t, r) => t + (r[key].tokens || 0), 0);
-  const sumCost = key => rows.some(r => r[key].cost != null) ? rows.reduce((t, r) => t + (r[key].cost || 0), 0) : null;
-  const total = sum('all');
-  return <Panel title="Consumo por máquina" note="Mesma conta · cada computador publica o próprio histórico"><div className="u-table-wrap"><table><thead><tr><th>Máquina</th><th>Tokens · histórico</th><th>Participação</th><th>Tokens · mês</th><th>Equivalente no mês</th><th>Dados de</th></tr></thead><tbody>
-    {rows.map(r => <tr key={r.name}><td>{r.local ? '● ' : '○ '}{r.name}{r.local ? <small> · esta</small> : null}</td><td>{fmtTokens(r.all.tokens)}</td><td>{pct(total ? r.all.tokens / total * 100 : 0)}</td><td>{fmtTokens(r.month.tokens)}</td><td>{money(r.month.cost)}</td><td>{r.local ? 'agora' : since(r.updated_at, now)}</td></tr>)}
-    <tr><td><strong>Total</strong></td><td><strong>{fmtTokens(total)}</strong></td><td>100%</td><td><strong>{fmtTokens(sum('month'))}</strong></td><td><strong>{money(sumCost('month'))}</strong></td><td /></tr>
-  </tbody></table></div><p className="u-hint">{rows.length < 2 ? `Nenhuma outra máquina publicou ainda em ${info.dir}. ` : ''}{info.error ? `Falha na pasta compartilhada: ${info.error}. ` : ''}Claude e Codex somados. As janelas de 5 horas e semanal já são da conta inteira; o ritmo por hora é só desta máquina.</p></Panel>;
 }
 function Panel({
   title,
@@ -262,16 +239,16 @@ function ReturnCard({ r, now }) {
   const proj = r.equivalent_brl != null && today.getDate() >= 3 ? r.equivalent_brl / today.getDate() * dim : null;
   const ratio = r.ratio;
   return <div className="u-finance r-card" style={{ '--provider': color }}>
-    <div className="u-heading"><h3 style={{ color }}>{r.name}</h3><span className="u-tag">{r.partial ? 'estimativa parcial' : 'equivalência estimada'}</span></div>
+    <div className="u-heading"><h3 style={{ color }}>{r.name}</h3><span className="u-tag">{r.price_unknown ? 'valor não informado' : PRICE_KIND[r.price_kind] || 'equivalência estimada'}</span></div>
     <div className="u-money">{money(r.equivalent_brl)}</div>
     <p>{fmtTokens(r.tokens)} tokens neste mês{r.provider === 'claude' ? ` · ${r.sessions} sessões` : ''}</p>
     <div className="u-finance-facts">
-      <span>Mensalidade <b>{r.price_brl == null ? 'não informada' : `${money(r.price_brl)}/mês`}</b></span>
+      <span>{r.price_kind === 'empresa' ? 'Pago pela empresa' : r.price_kind === 'subsidiado' ? 'Minha parte (subsidiada)' : 'Mensalidade'} <b>{r.price_unknown ? 'sem informação' : r.price_brl == null ? 'não informada' : `${money(r.price_brl)}/mês`}</b></span>
       <span>Extras informados <b>{money(r.extras_brl)}</b></span>
       {r.extra_credits_brl != null && <span>Créditos extras da conta <b>{money(r.extra_credits_brl)}</b></span>}
     </div>
     <Meter value={ratio == null ? 0 : Math.min(100, ratio * 100)} color={color} />
-    <h4>{ratio == null ? 'Informe a mensalidade desta conta para ver o retorno' : ratio >= 1 ? `${ratio.toFixed(2)}× o valor pago` : `${money(Math.max(0, r.paid_brl - r.equivalent_brl))} até empatar com a API`}</h4>
+    <h4>{ratio == null ? (r.price_unknown ? 'Sem o valor da assinatura, mostramos só o equivalente de API' : 'Informe o valor desta conta em Configurações › Contas') : ratio >= 1 ? `${ratio.toFixed(2)}× o valor pago` : `${money(Math.max(0, r.paid_brl - r.equivalent_brl))} até empatar com a API`}</h4>
     {ratio != null && <p>{ratio >= 1 ? `Diferença estimada: +${money(r.equivalent_brl - r.paid_brl)}.` : 'Ainda abaixo do que se paga no mês.'}{proj != null ? ` No ritmo atual, fecha o mês perto de ${money(proj)}.` : ''}</p>}
     {r.terminal_tokens > 0 && <p className="u-hint">Inclui {fmtTokens(r.terminal_tokens)} tokens de sessões do terminal.</p>}
   </div>;
@@ -460,7 +437,6 @@ export default function Dashboard() {
     verdict: () => state.switch ? <Verdict sw={state.switch} intended={state.config.intended_hours} onHours={h => save({ intended_hours: h })} saving={saving} /> : <p className="u-hint">Sem leitura da conta principal ainda.</p>,
     burn: () => <BurnWidget state={state} cg={cg} />,
     cost: () => <CostWidget returns={returns} now={now} accounts={accs} onOpenAccounts={() => { setTab('contas'); setDrawer(true); }} onTerminal={async id => { await api.setTerminal(id); setReturns(await api.returns()); }} />,
-    machines: () => state.machines ? <Machines state={state} cg={cg} fx={fx} now={now} /> : <p className="u-hint">Ligue a pasta de sincronização (sync_dir) para somar outras máquinas.</p>,
     charts: () => <ChartsWidget history={history} cg={cg} fx={fx} now={now} />,
     'quota-history': () => <QuotaHistoryWidget state={state} history={history} cg={cg} />,
     system: () => <SystemLinks update={state.update} />,

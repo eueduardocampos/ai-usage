@@ -141,3 +141,11 @@
 .r-terminal { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: #9aa8ba; flex-wrap: wrap }
 .r-terminal select { background: #ffffff08; color: #dbe5f2; border: 1px solid #ffffff1c; border-radius: 8px; padding: 6px 9px; font: inherit }
 @media (max-width: 520px) { .a-money { grid-template-columns: minmax(0, 1fr) } .t-gear span { display: none } }
+
+/* valor da assinatura */
+.a-price { border: 1px solid #ffffff12; border-radius: 10px; padding: 8px 12px 12px; margin: 12px 0 0 }
+.a-price legend { padding: 0 6px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #8795a9; font-weight: 700 }
+.a-price .a-app { margin-top: 2px }
+.a-field[data-off] { opacity: .45 }
+.a-unknown { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: #c7d2e0; cursor: pointer }
+.u-root .a-unknown input { width: 16px; height: 16px; padding: 0 }

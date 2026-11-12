@@ -9,7 +9,6 @@ export const WIDGETS = [
   { id: 'verdict', title: 'Posso trocar de modelo?', hint: 'Veredito pela janela mais apertada' },
   { id: 'burn', title: 'Ritmo por modelo', hint: 'Tokens por hora nas últimas 2 horas' },
   { id: 'cost', title: 'Retorno por conta', hint: 'Mensalidade de cada conta contra o equivalente de API no mês' },
-  { id: 'machines', title: 'Consumo por máquina', hint: 'Só aparece com a pasta de sincronização ligada' },
   { id: 'charts', title: 'Quando você usa', hint: 'Tokens por dia e ritmo por dia e hora' },
   { id: 'quota-history', title: 'Evolução das cotas', hint: 'Últimas 48 horas' },
   { id: 'system', title: 'Este sistema', hint: 'Versão, apps e Stream Deck' },
@@ -19,8 +18,8 @@ const ALL = WIDGETS.map(w => w.id);
 
 export const PRESETS = [
   { id: 'completo', name: 'Completo', desc: 'Tudo aberto', layout: { order: ALL, hidden: [], collapsed: [], wide: ['hardware', 'accounts', 'usage', 'charts', 'quota-history'] } },
-  { id: 'limites', name: 'Limites', desc: 'Máquina e contas, sem custo', layout: { order: ['hardware', 'accounts', 'verdict', 'burn', 'usage'], hidden: ['cost', 'machines', 'charts', 'quota-history', 'system'], collapsed: [], wide: ['hardware', 'accounts'] } },
-  { id: 'custos', name: 'Custos', desc: 'Consumo, retorno e gráficos', layout: { order: ['usage', 'cost', 'burn', 'charts', 'accounts', 'machines', 'hardware'], hidden: ['verdict', 'quota-history', 'system'], collapsed: ['hardware'], wide: ['usage', 'cost', 'charts'] } },
+  { id: 'limites', name: 'Limites', desc: 'Máquina e contas, sem custo', layout: { order: ['hardware', 'accounts', 'verdict', 'burn', 'usage'], hidden: ['cost', 'charts', 'quota-history', 'system'], collapsed: [], wide: ['hardware', 'accounts'] } },
+  { id: 'custos', name: 'Custos', desc: 'Consumo, retorno e gráficos', layout: { order: ['usage', 'cost', 'burn', 'charts', 'accounts', 'hardware'], hidden: ['verdict', 'quota-history', 'system'], collapsed: ['hardware'], wide: ['usage', 'cost', 'charts'] } },
   { id: 'minimo', name: 'Mínimo', desc: 'Só o essencial, cabe numa tela', layout: { order: ['hardware', 'accounts'], hidden: ALL.filter(i => !['hardware', 'accounts'].includes(i)), collapsed: [], wide: ['hardware', 'accounts'] } },
 ];
 

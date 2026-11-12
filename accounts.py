@@ -29,6 +29,9 @@ import urllib.parse
 import auth
 
 PRINCIPAL = "principal"
+# quem paga a assinatura: o retorno e' calculado sobre o valor informado,
+# seja ele o preco cheio, a parte subsidiada ou o que a empresa paga
+PRICE_KINDS = ("proprio", "subsidiado", "empresa")
 CODEX = "codex"
 LOGIN_TTL_S = 30 * 60
 NOME_MAX = 40
@@ -112,7 +115,9 @@ class AccountManager:
                            "created_at": a.get("created_at"),
                            "price_brl": _valor(a.get("price_brl")),
                            "extra_brl": _valor(a.get("extra_brl")),
-                           "extra_month": a.get("extra_month")})
+                           "extra_month": a.get("extra_month"),
+                           "price_kind": a.get("price_kind") if a.get("price_kind") in PRICE_KINDS else "proprio",
+                           "price_unknown": bool(a.get("price_unknown"))})
         # a principal e o Codex local sempre existem (podem so' ser renomeados)
         if PRINCIPAL not in vistos:
             limpos.insert(0, self._defaults()[0])
@@ -197,6 +202,12 @@ class AccountManager:
                     acc[k] = _valor(v)
                     if k == "extra_brl":
                         acc["extra_month"] = time.strftime("%Y-%m")
+            if "price_kind" in changes:
+                if changes["price_kind"] not in PRICE_KINDS:
+                    raise ValueError("tipo de valor invalido")
+                acc["price_kind"] = changes["price_kind"]
+            if "price_unknown" in changes:
+                acc["price_unknown"] = bool(changes["price_unknown"])
             if "app" in changes:
                 app = changes["app"]
                 if app is not None and not (isinstance(app, str) and app_valido(app)):

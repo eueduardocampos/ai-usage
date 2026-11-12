@@ -54,15 +54,23 @@ export function AccountCard({ acc, now, onOpen }) {
   </article>;
 }
 
-function MoneyField({ label, value, onSave }) {
-  const [text, setText] = useState(value == null ? '' : String(value).replace('.', ','));
+const fmtBRL = v => (v == null ? '' : v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+export const PRICE_KIND = {
+  proprio: 'Eu pago',
+  subsidiado: 'Subsidiada (a parte que eu pago)',
+  empresa: 'A empresa paga',
+};
+
+function MoneyField({ label, value, onSave, disabled }) {
+  const [text, setText] = useState(fmtBRL(value));
   const commit = () => {
     const t = text.trim();
     const v = t === '' ? null : Number(t.replace(/\./g, '').replace(',', '.'));
     if (v !== null && (!Number.isFinite(v) || v < 0)) return;
     if (v !== value) onSave(v);
   };
-  return <label className="a-field">{label}<span><i>R$</i><input inputMode="decimal" value={text} placeholder="0,00"
+  return <label className="a-field" data-off={disabled || undefined}>{label}<span><i>R$</i><input inputMode="decimal" value={text} placeholder="0,00" disabled={disabled}
     onChange={e => setText(e.target.value)} onBlur={commit} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /></span></label>;
 }
 
@@ -96,10 +104,24 @@ export function AccountEditor({ acc, apps, onChange, compact }) {
     </div>
     <small className="u-hint">{[acc.provider === 'claude' ? 'Claude' : 'ChatGPT / Codex', acc.email, acc.org_name].filter(Boolean).join(' · ')}</small>
     {acc.duplicate_of && <p className="a-warn">Esta conta entrou com o mesmo e-mail de outra. Desconecte e use "Copiar link" no perfil do navegador logado na conta certa.</p>}
-    <div className="a-money">
-      <MoneyField label="Mensalidade" value={acc.price_brl} onSave={v => run(() => api.updateAccount(acc.id, { price_brl: v }), 'Mensalidade salva.')} />
-      <MoneyField label="Extras pagos neste mês" value={acc.extra_brl} onSave={v => run(() => api.updateAccount(acc.id, { extra_brl: v }), 'Extras salvos.')} />
-    </div>
+    <fieldset className="a-price">
+      <legend>Valor da assinatura</legend>
+      <label className="a-app">Quem paga
+        <select value={acc.price_kind || 'proprio'} disabled={acc.price_unknown}
+          onChange={e => run(() => api.updateAccount(acc.id, { price_kind: e.target.value }), 'Salvo.')}>
+          {Object.entries(PRICE_KIND).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </label>
+      <div className="a-money">
+        <MoneyField label={acc.price_kind === 'empresa' ? 'Quanto a empresa paga por mês' : acc.price_kind === 'subsidiado' ? 'Quanto eu pago por mês' : 'Mensalidade'}
+          value={acc.price_brl} disabled={acc.price_unknown} onSave={v => run(() => api.updateAccount(acc.id, { price_brl: v }), 'Valor salvo.')} />
+        <MoneyField label="Extras pagos neste mês" value={acc.extra_brl} disabled={acc.price_unknown}
+          onSave={v => run(() => api.updateAccount(acc.id, { extra_brl: v }), 'Extras salvos.')} />
+      </div>
+      <label className="a-unknown"><input type="checkbox" checked={!!acc.price_unknown}
+        onChange={e => run(() => api.updateAccount(acc.id, { price_unknown: e.target.checked }), e.target.checked ? 'Ok, sem valor por enquanto.' : 'Pode preencher o valor.')} />
+        Não tenho essa informação neste momento</label>
+    </fieldset>
     {!compact && <label className="a-app">Abre o app
       <select value={acc.app || ''} onChange={e => run(() => api.updateAccount(acc.id, { app: e.target.value || null }), 'App salvo.')}>
         <option value="">Nenhum</option>

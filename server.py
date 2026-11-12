@@ -481,6 +481,8 @@ def _account_summary(acc, fx=None, chatgpt=None, full=True):
     out = {"id": acc["id"], "provider": acc["provider"], "name": acc["name"],
            "app": acc.get("app"),
            "price_brl": acc.get("price_brl"),
+           "price_kind": acc.get("price_kind", "proprio"),
+           "price_unknown": bool(acc.get("price_unknown")),
            "extra_brl": accounts_mod.extras_do_mes(acc),
            "app_name": os.path.basename(acc["app"])[:-4] if (acc.get("app") or "").endswith(".app")
            else (os.path.basename(acc["app"]) if acc.get("app") else None)}
@@ -1087,12 +1089,14 @@ def returns_period(q):
             eu = _extra_usage(latest, {}, fx, Ctx.cfg, am.runtime(a["id"])) if latest else None
             extra_api = (eu or {}).get("used_brl")
         equiv = _brl(usd, fx)
-        price = a.get("price_brl")
-        extras = accounts_mod.extras_do_mes(a)
+        price = None if a.get("price_unknown") else a.get("price_brl")
+        extras = None if a.get("price_unknown") else accounts_mod.extras_do_mes(a)
         pago = None if price is None else price + (extras or 0) + (extra_api or 0)
         out.append({"id": a["id"], "name": a["name"], "provider": a["provider"],
                     "tokens": tokens, "equivalent_usd": usd, "equivalent_brl": equiv,
-                    "price_brl": price, "extras_brl": extras, "extra_credits_brl": extra_api,
+                    "price_brl": price, "extras_brl": extras,
+                    "price_kind": a.get("price_kind", "proprio"),
+                    "price_unknown": bool(a.get("price_unknown")), "extra_credits_brl": extra_api,
                     "paid_brl": pago, "ratio": (equiv / pago) if equiv is not None and pago else None,
                     "partial": parcial, "sessions": len(s_["sessions"]),
                     "terminal_tokens": s_["from_terminal"]})
